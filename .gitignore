@@ -1,7 +1,8 @@
 # credentials & session — never commit
+.credentials.json
+.token.json
 login.txt
 session.json
-.token.json
 
 # personal state & caches
 watches.json

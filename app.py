@@ -1,11 +1,14 @@
 # /// script
 # dependencies = ["requests"]
 # ///
-"""Local Wellpass web app: browse studios/classes and book via EGYM's MWA API.
+"""Local Wellpass web app: browse studios on a map, see a studio's classes, book and auto-book.
 
-Run:  uv run app.py   ->  http://127.0.0.1:8765
-Auth: Netpulse login (login.txt) -> SSO -> Firebase ID token (Bearer for mwa-api).
+Run:  uv run app.py --open     ->  http://127.0.0.1:8765  (log in in the browser)
+Auth: Netpulse login -> SSO -> Firebase ID token (Bearer for EGYM's mwa-api).
+      The login form saves email+password to .credentials.json (chmod 600, git-ignored).
 """
+import argparse
+import webbrowser
 import datetime as dt
 import json
 import math
@@ -22,6 +25,8 @@ import requests
 
 HERE = Path(__file__).resolve().parent
 TOKEN_FILE = HERE / ".token.json"
+CRED_FILE = HERE / ".credentials.json"
+LEGACY_LOGIN = HERE / "login.txt"  # old two-line format, migrated on first run
 OVERVIEW_FILE = HERE / "cache" / "overview.json"
 WATCH_FILE = HERE / "watches.json"
 PORT = 8765
@@ -40,6 +45,31 @@ APP_UA = "Wellpass/3080 CFNetwork/3860.600.12 Darwin/25.5.0"
 
 # ---------------------------------------------------------------- auth
 
+class AuthRequired(Exception):
+    """No usable login yet — the browser shows the login screen."""
+
+
+class LoginFailed(Exception):
+    pass
+
+
+def private_write(path, text):
+    path.write_text(text)
+    os.chmod(path, 0o600)
+
+
+def load_creds():
+    if CRED_FILE.exists():
+        return json.loads(CRED_FILE.read_text())
+    if LEGACY_LOGIN.exists():
+        lines = [l.strip() for l in LEGACY_LOGIN.read_text().splitlines()]
+        if len(lines) >= 2 and lines[0] and lines[1]:
+            creds = {"email": lines[0], "password": lines[1]}
+            private_write(CRED_FILE, json.dumps(creds))
+            return creds
+    return None
+
+
 _lock = threading.Lock()
 _tok = {"id": None, "exp": 0.0}
 _fbkey = {}
@@ -54,17 +84,24 @@ def firebase_key():
 
 def save_token(refresh, id_token, expires_in):
     _tok.update(id=id_token, exp=time.time() + int(expires_in))
-    TOKEN_FILE.write_text(json.dumps({"refresh_token": refresh}))
-    os.chmod(TOKEN_FILE, 0o600)
+    private_write(TOKEN_FILE, json.dumps({"refresh_token": refresh}))
 
 
-def full_login():
-    email, password = [l.strip() for l in (HERE / "login.txt").read_text().splitlines()[:2]]
+def full_login(email=None, password=None):
+    """Log in with the given credentials (from the browser) or the saved ones. Returns the Netpulse profile."""
+    if email is None:
+        creds = load_creds()
+        if not creds:
+            raise AuthRequired
+        email, password = creds["email"], creds["password"]
     s = requests.Session()
     r = s.post(f"{NETPULSE}/np/exerciser/login", headers=NP_HEADERS, timeout=30,
                data={"username": email, "password": password, "relogin": "false"})
+    if r.status_code in (400, 401, 403):
+        raise LoginFailed("Wellpass didn't accept that email and password.")
     r.raise_for_status()
-    uuid = r.json()["uuid"]
+    me = r.json()
+    uuid = me["uuid"]
     sso = s.get(f"{NETPULSE}/np/exerciser/{uuid}/externalAccount/egym/qltLocations/sso", headers=NP_HEADERS, timeout=30)
     sso.raise_for_status()
     code = urllib.parse.unquote(re.search(r"[?&]code=([^&]+)", sso.json()["url"]).group(1))
@@ -73,6 +110,7 @@ def full_login():
     fb.raise_for_status()
     fb = fb.json()
     save_token(fb["refreshToken"], fb["idToken"], fb["expiresIn"])
+    return me
 
 
 def refresh_login():
@@ -93,8 +131,15 @@ def id_token(force=False):
                 raise FileNotFoundError
             refresh_login()
         except Exception:
-            full_login()
+            try:
+                full_login()
+            except LoginFailed:  # saved password no longer valid → ask again in the browser
+                raise AuthRequired
         return _tok["id"]
+
+
+def logged_in():
+    return CRED_FILE.exists() or LEGACY_LOGIN.exists() or TOKEN_FILE.exists()
 
 
 def mwa(method, path, **kw):
@@ -286,6 +331,9 @@ def check_watch(w):
 
 def watcher():
     while True:
+        if not logged_in():
+            time.sleep(WATCH_INTERVAL)
+            continue
         with _wlock:
             todo = [w for w in load_watches() if w.get("status") == "watching"]
         for w in todo:
@@ -322,6 +370,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path == "/":
                 return self.send(200, (HERE / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if u.path == "/api/status":  # handy for agents: curl it to see if the user still has to log in
+                creds = load_creds() if logged_in() else None
+                return self.send(200, {"loggedIn": logged_in(), "email": (creds or {}).get("email"),
+                                       "name": (creds or {}).get("name"), "studios": len(_gyms),
+                                       "autoBooking": sum(w.get("status") == "watching" for w in load_watches())})
             if u.path == "/api/studios":
                 return self.send(200, nearby(float(q["lat"]), float(q["lng"]), float(q.get("radius", 5)),
                                              q.get("q", ""), q.get("inApp", "1") == "1"))
@@ -343,6 +396,8 @@ class Handler(BaseHTTPRequestHandler):
                 hit = (r.json() or [None])[0]
                 return self.send(200, {"lat": float(hit["lat"]), "lng": float(hit["lon"]), "label": hit["display_name"]} if hit else None)
             self.send(404, {"error": "not found"})
+        except AuthRequired:
+            self.send(401, {"error": "login_required"})
         except requests.HTTPError as e:
             self.send(502, {"error": f"upstream {e.response.status_code}", "detail": e.response.text[:500]})
         except Exception as e:
@@ -351,6 +406,28 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         try:
+            if self.path == "/api/login":
+                email, password = (body.get("email") or "").strip(), body.get("password") or ""
+                if not email or not password:
+                    return self.send(400, {"error": "Enter your Wellpass email and password."})
+                with _lock:
+                    try:
+                        me = full_login(email, password)
+                    except LoginFailed as e:
+                        return self.send(401, {"error": str(e)})
+                name = " ".join(filter(None, [me.get("firstName"), me.get("lastName")])) or None
+                private_write(CRED_FILE, json.dumps({"email": email, "password": password, "name": name}))
+                LEGACY_LOGIN.unlink(missing_ok=True)
+                print(f"  logged in as {email}")
+                return self.send(200, {"loggedIn": True, "email": email, "name": name})
+            if self.path == "/api/logout":
+                with _lock:
+                    for f in (CRED_FILE, TOKEN_FILE, LEGACY_LOGIN):
+                        f.unlink(missing_ok=True)
+                    _tok.update(id=None, exp=0.0)
+                _scache.clear()
+                print("  logged out")
+                return self.send(200, {"loggedIn": False})
             if self.path in ("/api/watch", "/api/unwatch"):
                 with _wlock:
                     ws = [w for w in load_watches() if w["id"] != body["id"]]
@@ -374,6 +451,8 @@ class Handler(BaseHTTPRequestHandler):
                 data = {"raw": r.text[:500]}
             print("  ->", r.status_code, json.dumps(data)[:300])
             self.send(200 if r.ok else 502, data if r.ok else {"error": f"upstream {r.status_code}", "detail": data})
+        except AuthRequired:
+            self.send(401, {"error": "login_required"})
         except Exception as e:
             self.send(500, {"error": repr(e)})
 
@@ -381,13 +460,27 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(line_buffering=True)
+    ap = argparse.ArgumentParser(description="Local Wellpass web app")
+    ap.add_argument("--port", type=int, default=PORT)
+    ap.add_argument("--open", action="store_true", help="open the app in the default browser once it's ready")
+    args = ap.parse_args()
     print("loading studios…")
     load_gyms()
     load_activities()
     print(f"{len(_gyms)} studios, {sum(g['inApp'] for g in _gyms)} with in-app booking")
-    print("logging in…")
-    id_token()
+    if logged_in():
+        try:
+            id_token()
+            print("logged in with saved credentials")
+        except Exception as e:
+            print(f"saved login didn't work ({e!r}) — log in again in the browser")
     threading.Thread(target=watcher, daemon=True).start()
-    print(f"auto-book watcher running every {WATCH_INTERVAL}s")
-    print(f"ready: http://127.0.0.1:{PORT}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    url = f"http://127.0.0.1:{args.port}"
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    except OSError:
+        sys.exit(f"port {args.port} is busy — is the app already running? Try --port {args.port + 1}")
+    print(f"ready: {url}" + ("" if logged_in() else "  ← open it and log in with your Wellpass account"))
+    if args.open:
+        webbrowser.open(url)
+    server.serve_forever()

@@ -61,6 +61,23 @@
   .pop .foot { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
   .pop .reset { border: 0; background: none; cursor: pointer; font-weight: 600; text-decoration: underline; color: var(--ink); }
 
+  .acct { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; color: var(--muted); }
+  .acct:hover { color: var(--ink); border-color: var(--ink); }
+  .onb { position: fixed; inset: 0; z-index: 2500; display: grid; place-items: center; padding: 16px;
+         background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .onb-card { width: 100%; max-width: 420px; background: var(--card); border-radius: 24px; padding: 28px 26px 24px; box-shadow: 0 24px 80px rgba(0,0,0,.25); }
+  .onb-card .brand { margin-bottom: 22px; }
+  .onb-card h2 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; }
+  .onb-card p { color: var(--muted); margin: 0 0 18px; }
+  .onb-card label.lbl { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 6px; }
+  .onb-card input.in { width: 100%; height: 46px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); padding: 0 14px; outline: none; }
+  .onb-card input.in:focus { border-color: var(--ink); }
+  .onb-card .btn.wide { width: 100%; height: 48px; margin-top: 18px; font-size: 16px; }
+  .onb-card .err { color: var(--red); font-size: 14px; margin-top: 10px; min-height: 1.2em; }
+  .onb-card .fine { font-size: 12.5px; color: var(--muted); margin-top: 16px; display: flex; gap: 8px; }
+  .onb-card .row2 { display: flex; gap: 8px; margin-top: 10px; } .onb-card .row2 .btn { flex: 1; height: 44px; }
+  .steps { display: flex; gap: 6px; margin-bottom: 16px; } .steps i { height: 4px; flex: 1; border-radius: 9px; background: var(--soft); } .steps i.on { background: var(--ink); }
+
   /* ---------- layout ---------- */
   .split { flex: 1; display: grid; grid-template-columns: minmax(380px, 520px) 1fr; min-height: 0; }
   .list { overflow-y: auto; padding: 14px 18px 60px; min-width: 0; }
@@ -196,6 +213,7 @@
     <button data-tab="studios">Studios</button>
     <button data-tab="bookings">My bookings <span class="badge" id="bcount" hidden></span><span class="badge amber" id="wcount" hidden title="On auto-book"></span></button>
     <span class="live" id="live" title="Bookings and auto-book refresh every 10 s"><i></i><span>Live</span></span>
+    <button class="acct" id="acct" hidden></button>
   </nav>
 </header>
 
@@ -212,6 +230,7 @@
 </div>
 
 <div class="pop" id="actPop" hidden></div>
+<div class="onb" id="onb" hidden><div class="onb-card"><div class="brand">WELLPASS<small>CLASSES</small></div><div id="onbStep"></div></div></div>
 
 <dialog id="dlg"><form method="dialog">
   <div id="dlgBody"></div>
@@ -246,6 +265,7 @@ if (store.get("radius2")) $("#radius").value = store.get("radius2");
 async function api(path, opts) {
   const r = await fetch(path, opts);
   const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.error === "login_required") { setAuthed(false); showOnboarding("login"); throw new Error("Please log in with your Wellpass account."); }
   if (!r.ok) throw new Error((j.error || r.status) + (j.detail ? ": " + (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail)) : ""));
   return j;
 }
@@ -606,6 +626,7 @@ async function cancel(b) {
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape" || $("#dlg").open) return;
   if (!$("#actPop").hidden) { closeActs(); return; }
+  if (!$("#onb").hidden) return;
   if (document.activeElement?.tagName === "INPUT") { document.activeElement.blur(); return; }
   if (S.view?.onEsc?.()) e.preventDefault();
 });
@@ -672,7 +693,7 @@ updateActBtn();
 const POLL_MS = 10000;  // bookings + auto-book only; class lists load on demand
 let polling = false;
 async function poll() {
-  if (polling || document.hidden || $("#dlg").open || !S.view) return;
+  if (polling || !S.authed || document.hidden || $("#dlg").open || !S.view) return;
   polling = true; const v = S.view;
   try {
     const before = JSON.stringify([S.bookings, S.watches]);
@@ -707,10 +728,76 @@ async function run() {
   } catch (e) { $("#out").innerHTML = ""; status(esc(e.message)); }
 }
 
-if (qp.get("studio")) { document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab)); openStudio(qp.get("studio")).catch(e => status(esc(e.message))); }
-else if (S.loc || $("#place").value || S.tab === "bookings") { S.keepView = !!savedView; run().finally(() => S.keepView = false); }
-else { document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
-       status("Search a city or address, or tap the locate button."); loadBookings().catch(() => {}); }
+/* ---------------- onboarding & account ---------------- */
+function setAuthed(on, me) {
+  S.authed = on; if (me) S.me = me;
+  $("#acct").hidden = !on;
+  $("#acct").textContent = on ? `${S.me?.name || S.me?.email || "Account"} · Log out` : "";
+  if (!on) { $("#bcount").hidden = true; $("#wcount").hidden = true; }
+}
+function showOnboarding(step) {
+  closeActs?.();
+  const box = $("#onbStep"); $("#onb").hidden = false;
+  if (step === "login") {
+    box.innerHTML = `<div class="steps"><i class="on"></i><i></i></div>
+      <h2>Log in with your Wellpass account</h2>
+      <p>Use the same email and password as in the Wellpass app. You'll see studios on a map, their classes, and can book with one click.</p>
+      <form id="loginForm" autocomplete="on">
+        <label class="lbl" for="lEmail">Email</label><input class="in" id="lEmail" type="email" autocomplete="username" required value="${esc(S.me?.email || "")}">
+        <label class="lbl" for="lPw">Password</label><input class="in" id="lPw" type="password" autocomplete="current-password" required>
+        <button class="btn wide" id="lGo">Log in</button>
+        <div class="err" id="lErr"></div>
+      </form>
+      <div class="fine"><span>🔒</span><span>Your login is saved only on this computer (<code>.credentials.json</code>, readable only by you) and is sent only to Wellpass.</span></div>`;
+    $(S.me?.email ? "#lPw" : "#lEmail").focus();
+    $("#loginForm").onsubmit = async e => {
+      e.preventDefault();
+      $("#lGo").disabled = true; $("#lGo").textContent = "Logging in…"; $("#lErr").textContent = "";
+      try {
+        const me = await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("#lEmail").value, password: $("#lPw").value }) });
+        setAuthed(true, me); showOnboarding("area");
+      } catch (err) { $("#lErr").textContent = err.message; $("#lGo").disabled = false; $("#lGo").textContent = "Log in"; }
+    };
+  } else {
+    const first = (S.me?.name || "").split(" ")[0];
+    box.innerHTML = `<div class="steps"><i class="on"></i><i class="on"></i></div>
+      <h2>${first ? `Hi ${esc(first)}! ` : ""}Where do you train?</h2>
+      <p>We'll show the studios around there. You can change this anytime in the search bar.</p>
+      <form id="areaForm"><input class="in" id="aPlace" placeholder="City, address or postal code" value="${S.loc && S.loc !== MUNICH ? esc(S.loc.label) : ""}">
+        <div class="row2"><button type="button" class="btn ghost" id="aLocate">📍 Use my location</button><button type="button" class="btn ghost" id="aMunich">München</button></div>
+        <button class="btn wide" id="aGo">Show studios</button><div class="err" id="aErr"></div></form>`;
+    $("#aPlace").focus();
+    const done = loc => { S.loc = loc; store.set("loc", loc); store.set("mapView", null); $("#place").value = loc.label; $("#onb").hidden = true; S.tab = "studios"; S.gym = null; run(); };
+    $("#aMunich").onclick = () => done(MUNICH);
+    $("#aLocate").onclick = () => navigator.geolocation.getCurrentPosition(
+      p => done({ lat: p.coords.latitude, lng: p.coords.longitude, label: "My location" }),
+      e => $("#aErr").textContent = "Location unavailable: " + e.message);
+    $("#areaForm").onsubmit = async e => {
+      e.preventDefault();
+      const t = $("#aPlace").value.trim(); if (!t) return done(S.loc || MUNICH);
+      $("#aErr").textContent = "";
+      try { const g = await api("/api/geocode?q=" + encodeURIComponent(t)); g ? done({ lat: g.lat, lng: g.lng, label: t }) : ($("#aErr").textContent = `Couldn't find “${t}”.`); }
+      catch (err) { $("#aErr").textContent = err.message; }
+    };
+  }
+}
+$("#acct").onclick = async () => {
+  const ok = await dialog(`<div class="dbody"><h3>Log out?</h3><p style="margin:0 0 12px">This deletes your saved Wellpass login from this computer. Classes on auto-book pause until you log in again.</p>
+    <div class="actions"><button class="btn ghost" value="cancel">Stay logged in</button><button class="btn danger" value="ok">Log out</button></div></div>`);
+  if (!ok) return;
+  await api("/api/logout", { method: "POST" }).catch(() => {});
+  setAuthed(false); S.bookings = []; S.watches = []; showOnboarding("login");
+};
+
+async function boot() {
+  const st = await fetch("/api/status").then(r => r.json()).catch(() => ({ loggedIn: false }));
+  setAuthed(st.loggedIn, st);
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
+  if (!st.loggedIn) { S.tab = "studios"; showOnboarding("login"); run(); return; }  // studios are public, so the map fills in behind the login
+  if (qp.get("studio")) return openStudio(qp.get("studio")).catch(e => status(esc(e.message)));
+  S.keepView = !!savedView; run().finally(() => S.keepView = false);
+}
+boot();
 </script>
 </body>
 </html>
