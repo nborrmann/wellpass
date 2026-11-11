@@ -220,7 +220,7 @@
   <nav class="tabs">
     <button data-tab="studios">Studios</button>
     <button data-tab="bookings">My bookings <span class="badge" id="bcount" hidden></span><span class="badge amber" id="wcount" hidden title="On auto-book"></span></button>
-    <span class="live" id="live" title="Bookings and auto-book refresh every 10 s"><i></i><span>Live</span></span>
+    <span class="live" id="live" title="Auto-book status refreshes every 10 s; bookings reload when an auto-book completes"><i></i><span>Live</span></span>
     <button class="acct" id="acct" hidden></button>
   </nav>
 </header>
@@ -417,11 +417,15 @@ $("#filter").addEventListener("input", () => S.view?.redraw?.());
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; store.set("tab", S.tab); S.gym = null; run(); });
 
 /* ---------------- bookings ---------------- */
-async function loadBookings() {
-  const a = new Date(Date.now() - 864e5), b = new Date(Date.now() + 60 * 864e5);
-  [S.bookings, S.watches] = await Promise.all([api(`/api/bookings?from=${isoZ(a)}&to=${isoZ(b)}`), api("/api/watches")]);
+async function loadWatches() {  // local file on our server — costs no Wellpass request
+  S.watches = await api("/api/watches");
   const nw = S.watches.filter(w => w.status === "watching").length;
   $("#wcount").hidden = !nw; $("#wcount").textContent = `⏳ ${nw}`;
+  return S.watches;
+}
+async function loadBookings() {  // 1 Wellpass request
+  const a = new Date(Date.now() - 864e5), b = new Date(Date.now() + 60 * 864e5);
+  [S.bookings] = await Promise.all([api(`/api/bookings?from=${isoZ(a)}&to=${isoZ(b)}`), loadWatches()]);
   const n = S.bookings.filter(x => x.status === "BOOKED" && new Date(x.session.end) > new Date()).length;
   $("#bcount").hidden = !n; $("#bcount").textContent = n;
   return S.bookings;
@@ -666,12 +670,12 @@ async function watch(c) {
     <div class="actions"><button class="btn ghost" value="cancel">Not now</button><button class="btn" value="ok">Start auto-book</button></div></div>`);
   if (!ok) return;
   try { await api("/api/watch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
-        toast("Auto-book on ⏳"); await loadBookings(); S.view.redraw(); }
+        toast("Auto-book on ⏳"); await loadWatches(); S.view.redraw(); }
   catch (e) { toast("Couldn't start auto-book: " + e.message); }
 }
 async function unwatch(id) {
   try { await api("/api/unwatch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
-        toast("Auto-book stopped"); await loadBookings(); S.view.redraw(); }
+        toast("Auto-book stopped"); await loadWatches(); S.view.redraw(); }
   catch (e) { toast("Failed: " + e.message); }
 }
 
@@ -703,11 +707,15 @@ function openActs() {
     $("#actGo").onclick = () => { S.acts = draft; store.set("acts", [...draft]); closeActs(); updateActBtn(); S.gym = null; S.view?.redraw(); };
   };
   render();
-  const r = $("#actBtn").getBoundingClientRect();
-  pop.style.top = r.bottom + 8 + "px";
-  pop.style.left = Math.max(12, Math.min(r.left, innerWidth - pop.offsetWidth - 12)) + "px";
-  pop.hidden = false; $("#actQ").focus();
+  pop.hidden = false;  // must be visible before measuring its width
+  placeActs(); $("#actQ").focus();
 }
+function placeActs() {
+  const pop = $("#actPop"), r = $("#actBtn").getBoundingClientRect();
+  pop.style.top = Math.min(r.bottom + 8, innerHeight - 200) + "px";
+  pop.style.left = Math.max(12, Math.min(r.right - pop.offsetWidth, innerWidth - pop.offsetWidth - 12)) + "px";  // right-align with the button, stay on screen
+}
+addEventListener("resize", () => { if (!$("#actPop").hidden) placeActs(); });
 function closeActs() { $("#actPop").hidden = true; }
 $("#actBtn").onclick = e => { e.stopPropagation(); $("#actPop").hidden ? openActs() : closeActs(); };
 document.addEventListener("mousedown", e => { if (!$("#actPop").hidden && !$("#actPop").contains(e.target) && e.target !== $("#actBtn") && !$("#actBtn").contains(e.target)) closeActs(); });
@@ -721,9 +729,12 @@ async function poll() {
   if (polling || !S.authed || document.hidden || $("#dlg").open || !S.view) return;
   polling = true; const v = S.view;
   try {
-    const before = JSON.stringify([S.bookings, S.watches]);
-    await loadBookings();
-    const changed = JSON.stringify([S.bookings, S.watches]) !== before;
+    // only the local auto-book list is polled; bookings are re-fetched from Wellpass only when an auto-book entry changed state
+    const sig = () => (S.watches || []).map(w => w.id + ":" + w.status).join(",");
+    const before = JSON.stringify(S.watches), beforeSig = sig();
+    await loadWatches();
+    if (sig() !== beforeSig) await loadBookings();
+    const changed = JSON.stringify(S.watches) !== before;
     if (changed && S.view === v && !$("#dlg").open) {
       const y = $("#list").scrollTop;
       const open = [...$("#out").querySelectorAll("details[open][data-k]")].map(d => d.dataset.k);
@@ -820,6 +831,7 @@ async function boot() {
   document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
   if (!st.loggedIn) { S.tab = "studios"; showOnboarding("login"); run(); return; }  // studios are public, so the map fills in behind the login
   if (qp.get("studio")) return openStudio(qp.get("studio")).catch(e => status(esc(e.message)));
+  if (S.tab !== "bookings") loadBookings().catch(() => {});  // once, for the tab badges (the bookings tab loads them itself)
   S.keepView = !!savedView; run().finally(() => S.keepView = false);
 }
 boot();
