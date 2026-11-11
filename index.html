@@ -426,6 +426,7 @@ async function loadWatches() {  // local file on our server — costs no Wellpas
 async function loadBookings() {  // 1 Wellpass request
   const a = new Date(Date.now() - 864e5), b = new Date(Date.now() + 60 * 864e5);
   [S.bookings] = await Promise.all([api(`/api/bookings?from=${isoZ(a)}&to=${isoZ(b)}`), loadWatches()]);
+  S.bookingsLoaded = true;
   const n = S.bookings.filter(x => x.status === "BOOKED" && new Date(x.session.end) > new Date()).length;
   $("#bcount").hidden = !n; $("#bcount").textContent = n;
   return S.bookings;
@@ -512,9 +513,12 @@ async function openStudio(slug) {
   const prevTab = from.tab, prevView = from.view;
   $("#bar").innerHTML = ""; skeleton(3); status("");
   $("#list").scrollTop = 0;
-  const g = await api(`/api/studio?slug=${encodeURIComponent(slug)}`);
-  const curl = `/api/classes?gymId=${g.gymId}&${range(0, 7)}`;
-  let [classes] = await Promise.all([g.inApp ? api(curl) : Promise.resolve([]), loadBookings()]);
+  // details, classes and bookings in parallel — the server resolves the slug to the studio id itself
+  let [g, classes] = await Promise.all([
+    api(`/api/studio?slug=${encodeURIComponent(slug)}`),
+    api(`/api/classes?slug=${encodeURIComponent(slug)}&${range(0, 7)}`),
+    S.bookingsLoaded ? null : loadBookings(),  // bookings are already known; only fetch if the first load failed
+  ]);
   S.gym = g.gymId;
   if (!pins.length) { setMarkers([g], { fit: false }); map.setView([g.lat, g.lng], 15); }  // opened via link: nothing on the map yet
   else { drawPins(); if (!map.getBounds().contains([g.lat, g.lng])) map.panTo([g.lat, g.lng]); }
@@ -567,9 +571,9 @@ async function openStudio(slug) {
   S.view = { redraw, isDetail: true, from, onEsc: () => (back(), true) }; redraw();
 }
 
-async function viewBookings() {
-  $("#bar").innerHTML = ""; skeleton(3); status("Loading your bookings…");
-  await loadBookings();
+async function viewBookings(fresh = false) {
+  $("#bar").innerHTML = "";
+  if (fresh || !S.bookingsLoaded) { skeleton(3); status("Loading your bookings…"); await loadBookings(); }
   let firstDraw = true;
   const redraw = () => {
     const active = S.bookings.filter(b => b.status === "BOOKED" && new Date(b.session.end) > new Date()).sort((a, b) => a.session.start.localeCompare(b.session.start));
@@ -580,7 +584,7 @@ async function viewBookings() {
     const ws = (S.watches || []).slice().sort((a, b) => (a.status !== "watching") - (b.status !== "watching") || a.start.localeCompare(b.start));
     const nw = ws.filter(w => w.status === "watching").length;
     status(`<span><b>${active.length}</b> upcoming${nw ? ` · <b>${nw}</b> on auto-book` : ""}</span><button class="clear" id="reload">↻ Refresh</button>`);
-    $("#reload").onclick = () => viewBookings();
+    $("#reload").onclick = () => viewBookings(true);
     const ST = { watching: ["amber", "Auto-booking"], booked: ["lime", "✓ Booked automatically"], expired: ["", "Expired"], gone: ["", "Gone"], failed: ["", "Failed"] };
     let html = ws.length ? `<div class="group">Auto-book</div>` + ws.map(w => {
       const [cls, label] = ST[w.status] || ["", w.status];
@@ -791,7 +795,7 @@ function showOnboarding(step) {
       $("#lGo").disabled = true; $("#lGo").textContent = "Logging in…"; $("#lErr").textContent = "";
       try {
         const me = await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("#lEmail").value, password: $("#lPw").value }) });
-        setAuthed(true, me); showOnboarding("area");
+        setAuthed(true, me); S.bookingsLoaded = false; loadBookings().catch(() => {}); showOnboarding("area");
       } catch (err) { $("#lErr").textContent = err.message; $("#lGo").disabled = false; $("#lGo").textContent = "Log in"; }
     };
   } else {
@@ -822,7 +826,7 @@ $("#acct").onclick = async () => {
     <div class="actions"><button class="btn ghost" value="cancel">Stay logged in</button><button class="btn danger" value="ok">Log out</button></div></div>`);
   if (!ok) return;
   await api("/api/logout", { method: "POST" }).catch(() => {});
-  setAuthed(false); S.bookings = []; S.watches = []; showOnboarding("login");
+  setAuthed(false); S.bookings = []; S.watches = []; S.bookingsLoaded = false; showOnboarding("login");
 };
 
 async function boot() {
@@ -831,7 +835,7 @@ async function boot() {
   document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
   if (!st.loggedIn) { S.tab = "studios"; showOnboarding("login"); run(); return; }  // studios are public, so the map fills in behind the login
   if (qp.get("studio")) return openStudio(qp.get("studio")).catch(e => status(esc(e.message)));
-  if (S.tab !== "bookings") loadBookings().catch(() => {});  // once, for the tab badges (the bookings tab loads them itself)
+  if (S.tab !== "bookings") loadBookings().catch(() => {});  // once per page load; afterwards only after book/cancel/auto-book changes or ↻
   S.keepView = !!savedView; run().finally(() => S.keepView = false);
 }
 boot();

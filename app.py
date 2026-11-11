@@ -43,6 +43,10 @@ NP_HEADERS = {
 }
 APP_UA = "Wellpass/3080 CFNetwork/3860.600.12 Darwin/25.5.0"
 
+# one shared HTTP session: keeps TCP/TLS connections to each host open and reuses them
+HTTP = requests.Session()
+HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16))
+
 # ---------------------------------------------------------------- auth
 
 class AuthRequired(Exception):
@@ -77,7 +81,7 @@ _fbkey = {}
 
 def firebase_key():
     if "v" not in _fbkey:
-        js = requests.get("https://locations.egym.com/resources/js/env.js", timeout=30).text
+        js = HTTP.get("https://locations.egym.com/resources/js/env.js", timeout=30).text
         _fbkey["v"] = re.search(r'firebaseOptions:\s*\{[^}]*?apiKey:\s*"([^"]+)"', js, re.S).group(1)
     return _fbkey["v"]
 
@@ -105,7 +109,7 @@ def full_login(email=None, password=None):
     sso = s.get(f"{NETPULSE}/np/exerciser/{uuid}/externalAccount/egym/qltLocations/sso", headers=NP_HEADERS, timeout=30)
     sso.raise_for_status()
     code = urllib.parse.unquote(re.search(r"[?&]code=([^&]+)", sso.json()["url"]).group(1))
-    fb = requests.post(f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={firebase_key()}",
+    fb = HTTP.post(f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={firebase_key()}",
                        json={"token": code, "returnSecureToken": True}, timeout=30)
     fb.raise_for_status()
     fb = fb.json()
@@ -115,7 +119,7 @@ def full_login(email=None, password=None):
 
 def refresh_login():
     refresh = json.loads(TOKEN_FILE.read_text())["refresh_token"]
-    r = requests.post(f"https://securetoken.googleapis.com/v1/token?key={firebase_key()}", timeout=30,
+    r = HTTP.post(f"https://securetoken.googleapis.com/v1/token?key={firebase_key()}", timeout=30,
                       data={"grant_type": "refresh_token", "refresh_token": refresh})
     r.raise_for_status()
     r = r.json()
@@ -146,7 +150,7 @@ def mwa(method, path, **kw):
     for attempt in range(2):
         headers = {"Authorization": f"Bearer {id_token(force=attempt > 0)}", "Accept": "application/json",
                    "User-Agent": APP_UA, "Accept-Language": "de-DE"}
-        r = requests.request(method, MWA + path, headers=headers, timeout=30, **kw)
+        r = HTTP.request(method, MWA + path, headers=headers, timeout=30, **kw)
         if r.status_code != 401:
             return r
     return r
@@ -160,7 +164,7 @@ _gyms = []
 def load_gyms():
     if not OVERVIEW_FILE.exists() or time.time() - OVERVIEW_FILE.stat().st_mtime > 86400:
         OVERVIEW_FILE.parent.mkdir(exist_ok=True)
-        r = requests.get(f"{GYMFINDER}/v1/gym/overview", params={"searchFilter": "wellpass", "limit": 20000}, timeout=120)
+        r = HTTP.get(f"{GYMFINDER}/v1/gym/overview", params={"searchFilter": "wellpass", "limit": 20000}, timeout=120)
         r.raise_for_status()
         OVERVIEW_FILE.write_bytes(r.content)
     _gyms[:] = [
@@ -180,7 +184,7 @@ _activities = {}  # ENUM -> English label, from the gym finder's filter vocabula
 
 
 def load_activities():
-    r = requests.get(f"{GYMFINDER}/v1/search-filter/wellpass", timeout=30)
+    r = HTTP.get(f"{GYMFINDER}/v1/search-filter/wellpass", timeout=30)
     r.raise_for_status()
     for grp in r.json():
         for f in grp.get("filters") or []:
@@ -189,7 +193,7 @@ def load_activities():
 
 
 def studio_detail(slug):
-    r = requests.get(f"{GYMFINDER}/v1/gym", params={"slug": slug}, timeout=30)
+    r = HTTP.get(f"{GYMFINDER}/v1/gym", params={"slug": slug}, timeout=30)
     r.raise_for_status()
     d = r.json()[0]
     return {
@@ -378,8 +382,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/studios":
                 return self.send(200, nearby(float(q["lat"]), float(q["lng"]), float(q.get("radius", 5)),
                                              q.get("q", ""), q.get("inApp", "1") == "1"))
-            if u.path == "/api/classes":
-                return self.send(200, [with_gym(slim_session(s)) for s in sessions(q["gymId"], q["from"], q["to"])])
+            if u.path == "/api/classes":  # by gymId, or by slug so the page can load it in parallel with /api/studio
+                gym = _by_id.get(q.get("gymId")) or next((g for g in _gyms if g["slug"] == q.get("slug")), None)
+                gym_id = q.get("gymId") or (gym or {}).get("gymId")
+                if not gym_id or (gym and not gym["inApp"]):
+                    return self.send(200, [])  # studio doesn't take in-app bookings → no Wellpass request
+                return self.send(200, [with_gym(slim_session(s)) for s in sessions(gym_id, q["from"], q["to"])])
             if u.path == "/api/studio":
                 return self.send(200, {**(next((g for g in _gyms if g["slug"] == q["slug"]), {})), **studio_detail(q["slug"])})
             if u.path == "/api/activities":
@@ -390,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/bookings":
                 return self.send(200, bookings(q["from"], q["to"]))
             if u.path == "/api/geocode":
-                r = requests.get("https://nominatim.openstreetmap.org/search", timeout=20,
+                r = HTTP.get("https://nominatim.openstreetmap.org/search", timeout=20,
                                  params={"q": q["q"], "format": "json", "limit": 1},
                                  headers={"User-Agent": "wellpass-local-browser/0.1"})
                 hit = (r.json() or [None])[0]
