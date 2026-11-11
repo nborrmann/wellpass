@@ -149,7 +149,17 @@
   details.more p { white-space: pre-wrap; font-size: 13.5px; margin: 6px 0 0; color: var(--muted); }
 
   /* ---------- studio card ---------- */
-  .studio { background: var(--card); border-radius: 18px; overflow: hidden; margin-bottom: 14px; box-shadow: var(--shadow); cursor: pointer; border: 2px solid transparent; transition: border-color .15s; }
+  .heart { border: 0; background: rgba(255,255,255,.92); width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18); flex-shrink: 0; }
+  .heart svg { fill: none; stroke: #111; stroke-width: 2; transition: transform .15s; }
+  .heart:hover svg { transform: scale(1.12); }
+  .heart.on svg { fill: #e0245e; stroke: #e0245e; }
+  .studio .heart { position: absolute; top: 12px; right: 12px; }
+  .detail .titlerow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .detail .titlerow .heart { margin-top: 8px; box-shadow: none; border: 1px solid var(--line); background: var(--card); }
+  .detail .titlerow .heart svg { stroke: var(--ink); }
+  .pin em { position: absolute; top: -8px; left: -8px; width: 20px; height: 20px; border-radius: 50%; background: #e0245e; color: #fff; font-style: normal; font-size: 11px; display: grid; place-items: center; border: 2px solid var(--card); }
+  .actbtn.fav.on { background: #e0245e; border-color: #e0245e; color: #fff; }
+  .studio { position: relative; background: var(--card); border-radius: 18px; overflow: hidden; margin-bottom: 14px; box-shadow: var(--shadow); cursor: pointer; border: 2px solid transparent; transition: border-color .15s; }
   .studio:hover, .studio.hl { border-color: var(--ink); }
   .studio .hero { width: 100%; height: 170px; object-fit: cover; background: var(--soft); }
   .studio .hero.ph { display: grid; place-items: center; font-weight: 800; font-size: 40px; color: var(--muted); letter-spacing: .1em; }
@@ -214,6 +224,8 @@
       <label class="field"><input id="filter" placeholder="Class, studio or teacher" autocomplete="off">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:10px;color:var(--muted)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></label>
       <select class="pill" id="radius" title="Radius"><option value="1">1 km</option><option value="2">2 km</option><option value="3">3 km</option><option value="5">5 km</option><option value="12" selected>12 km · all Munich</option><option value="20">20 km</option></select>
+      <button class="actbtn fav" id="favBtn" title="Show only your favourite studios (synced with the Wellpass app)">♥ Favourites</button>
+      <button class="actbtn" id="inAppBtn" title="Only studios where classes can be booked in the app">Bookable in app</button>
       <button class="actbtn" id="actBtn">Activities <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg></button>
     </div>
   </div>
@@ -262,7 +274,7 @@ const pretty = a => String(a || "").toLowerCase().replaceAll("_", " ").replace(/
 const MUNICH = { lat: 48.137, lng: 11.575, label: "München" };
 const S = {
   loc: store.get("loc") || MUNICH, tab: store.get("tab") === "bookings" ? "bookings" : "studios", gym: null,
-  inAppOnly: store.get("inAppOnly") ?? true, acts: new Set(store.get("acts") || []), actNames: {}, bookings: [], view: null,
+  inAppOnly: store.get("inAppOnly") ?? true, favs: new Set(), favOnly: store.get("favOnly") ?? false, acts: new Set(store.get("acts") || []), actNames: {}, bookings: [], view: null,
 };
 const qp = new URLSearchParams(location.search);
 if (qp.get("tab") === "bookings") S.tab = "bookings";
@@ -303,7 +315,10 @@ function openState(h) {
 /* ---------------- map ---------------- */
 const dark = matchMedia("(prefers-color-scheme: dark)").matches;
 const savedView = store.get("mapView");  // {lat,lng,zoom} — restored on reload instead of re-fitting
-const map = L.map("map", { zoomControl: false }).setView(savedView ? [savedView.lat, savedView.lng] : [S.loc?.lat || 48.137, S.loc?.lng || 11.575], savedView?.zoom || 13);
+// Continuous zoom: Leaflet's own wheel zoom always jumps in animated steps, so it's replaced by a handler below that
+// sets the zoom directly every animation frame. Tuning: scroll/pinch pixels per zoom level (lower = faster).
+const WHEEL_PX_PER_LEVEL = 180, PINCH_PX_PER_LEVEL = 45;
+const map = L.map("map", { zoomControl: false, zoomSnap: 0, zoomDelta: 1, scrollWheelZoom: false }).setView(savedView ? [savedView.lat, savedView.lng] : [S.loc?.lat || 48.137, S.loc?.lng || 11.575], savedView?.zoom || 13);
 map.on("moveend", () => { const c = map.getCenter(); store.set("mapView", { lat: c.lat, lng: c.lng, zoom: map.getZoom() }); });
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -349,12 +364,38 @@ function drawPins() {
     });
   }
 }
-map.on("zoomend", drawPins);
+let pinTimer = 0;  // rebuild pins once zooming pauses, not on every frame
+map.on("zoomend", () => { clearTimeout(pinTimer); pinTimer = setTimeout(drawPins, 120); });
+
+// smooth wheel / trackpad / pinch zoom around the cursor
+{
+  let acc = 0, pt = null, frame = 0, endTimer = 0;
+  map.getContainer().addEventListener("wheel", e => {
+    e.preventDefault();
+    const px = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+    acc += px / (e.ctrlKey ? PINCH_PX_PER_LEVEL : WHEEL_PX_PER_LEVEL);  // ctrlKey = trackpad pinch on macOS
+    pt = map.mouseEventToContainerPoint(e);
+    if (!frame) frame = requestAnimationFrame(() => {
+      frame = 0;
+      const z = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom() - acc));
+      acc = 0;
+      if (z === map.getZoom()) return;
+      // zoom around the cursor the way Leaflet's own pinch zoom does: `pinch: true` keeps the current tiles on
+      // screen (scaled) until the new zoom level's tiles have loaded, so the map never goes blank
+      const scale = map.getZoomScale(z), half = map.getSize().divideBy(2);
+      const center = map.containerPointToLatLng(half.add(pt.subtract(half).multiplyBy(1 - 1 / scale)));
+      map._stop();
+      map._move(center, z, { pinch: true });
+      clearTimeout(endTimer);
+      endTimer = setTimeout(() => map._moveEnd(true), 150);  // fires zoomend/moveend once the gesture pauses
+    });
+  }, { passive: false });
+}
 
 function pinIcon(g, count, sel) {
   const bg = g.image ? `style="background-image:url('${esc(img(g.image, "t"))}')"` : "";
   return L.divIcon({ className: "", iconSize: [46, 46], iconAnchor: [23, 55],
-    html: `<div class="pin ${g.image ? "" : "ph"} ${sel ? "sel" : ""}" ${bg}>${g.image ? "" : initials(g.name)}${count ? `<b>${count}</b>` : ""}</div>` });
+    html: `<div class="pin ${g.image ? "" : "ph"} ${sel ? "sel" : ""}" ${bg}>${g.image ? "" : initials(g.name)}${count ? `<b>${count}</b>` : ""}${S.favs.has(g.gymId) ? "<em>♥</em>" : ""}</div>` });
 }
 
 function setMarkers(gyms, { counts = {}, fit = true, onClick } = {}) {
@@ -365,11 +406,8 @@ function setMarkers(gyms, { counts = {}, fit = true, onClick } = {}) {
     meMarker = L.marker([S.loc.lat, S.loc.lng], { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [16, 16] }), interactive: false }).addTo(map);
   }
   if (fit && !S.keepView) {
-    const pts = gyms.filter(g => g.lat != null).map(g => [g.lat, g.lng]);
-    if (S.loc) pts.push([S.loc.lat, S.loc.lng]);
-    programmatic = true;
-    if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 }); else if (pts.length) map.setView(pts[0], 15);
-    setTimeout(() => programmatic = false, 600);
+    userMoved = false; $("#searchArea").hidden = true;
+    // the map never moves or zooms on its own — only the user moves it
   }
 }
 function highlight(gymId, on) {
@@ -388,7 +426,12 @@ function areaCovered() {
   const loaded = L.latLng(S.loc.lat, S.loc.lng).toBounds(2 * Number($("#radius").value) * 1000).pad(0.1);
   return loaded.contains(map.getBounds());
 }
-map.on("moveend", () => { $("#searchArea").hidden = S.tab === "bookings" || areaCovered(); });
+// the button only reacts to moves the user made (drag, wheel, pinch, zoom buttons) — not to the map fitting itself
+let userMoved = false;
+map.on("dragstart", () => userMoved = true);
+["wheel", "touchstart", "dblclick"].forEach(ev => map.getContainer().addEventListener(ev, () => userMoved = true, { passive: true }));
+map.getContainer().querySelector(".leaflet-control-zoom")?.addEventListener("click", () => userMoved = true);
+map.on("moveend", () => { $("#searchArea").hidden = !userMoved || S.tab === "bookings" || areaCovered(); });
 $("#searchArea").onclick = () => {
   const c = map.getCenter();
   S.loc = { lat: c.lat, lng: c.lng, label: "Map area" }; $("#place").value = S.loc.label; store.set("loc", S.loc);
@@ -476,17 +519,22 @@ function bindCards(root, list) {
   hoverBind(root);
 }
 const textMatch = c => { const f = $("#filter").value.trim().toLowerCase(); return !f || [c.name, c.gymName, c.instructor, c.room].join(" ").toLowerCase().includes(f); };
+const syncInApp = () => $("#inAppBtn").classList.toggle("on", S.inAppOnly);
+$("#inAppBtn").onclick = () => {
+  S.inAppOnly = !S.inAppOnly; store.set("inAppOnly", S.inAppOnly); syncInApp();
+  if (S.tab !== "studios" || S.view?.isDetail) { S.tab = "studios"; S.gym = null; }
+  S.keepView = true; run().finally(() => S.keepView = false);  // filter only — don't move the map
+};
+syncInApp();
 function studiosBar() {
-  $("#bar").innerHTML = `<div class="chips"><button class="chip ${S.inAppOnly ? "on" : ""}" id="inapp">Bookable in app</button><button class="chip ${!S.inAppOnly ? "on" : ""}" id="allst">All studios</button></div>`;
-  $("#inapp").onclick = () => { S.inAppOnly = true; store.set("inAppOnly", true); run(); };
-  $("#allst").onclick = () => { S.inAppOnly = false; store.set("inAppOnly", false); run(); };
+  $("#bar").innerHTML = "";
 }
 
 async function viewStudios() {
   studiosBar();
   const l = await resolvePlace();
   skeleton(3); status("Loading studios…");
-  const list = await api(`/api/studios?lat=${l.lat}&lng=${l.lng}&radius=${$("#radius").value}&inApp=${S.inAppOnly ? 1 : 0}`);
+  const list = await api(`/api/studios?lat=${l.lat}&lng=${l.lng}&radius=${$("#radius").value}&inApp=${S.inAppOnly ? 1 : 0}&favs=${S.favOnly ? 1 : 0}`);
   let firstDraw = true;
   const redraw = () => {
     const f = $("#filter").value.trim().toLowerCase();
@@ -494,8 +542,9 @@ async function viewStudios() {
     const shown = pop.filter(actMatch);
     S.pop = pop;
     setMarkers(shown, { fit: firstDraw, onClick: g => openStudio(g.slug) }); firstDraw = false;
-    status(`<span><b>${shown.length}</b> studios within ${$("#radius").value} km</span>`);
-    $("#out").innerHTML = shown.map(g => `<article class="studio" data-slug="${esc(g.slug)}" data-gymhl="${esc(g.gymId)}">
+    status(S.favOnly ? `<span><b>${shown.length}</b> favourite ${shown.length === 1 ? "studio" : "studios"}${shown.length ? "" : " — tap ♥ on a studio to add one"}</span>`
+                     : `<span><b>${shown.length}</b> studios within ${$("#radius").value} km</span>`);
+    $("#out").innerHTML = shown.map(g => `<article class="studio" data-slug="${esc(g.slug)}" data-gymhl="${esc(g.gymId)}">${heartBtn(g)}
         ${g.image ? `<img class="hero" loading="lazy" src="${esc(img(g.image, "s"))}" alt="">` : `<div class="hero ph">${initials(g.name)}</div>`}
         <div class="body"><h3>${esc(g.name)}</h3>
           <div class="line">${g.km.toFixed(1)} km${openState(g.hours) ? " · " + openState(g.hours) : ""}</div>
@@ -503,6 +552,7 @@ async function viewStudios() {
             ${g.activities.slice(0, 4).map(a => `<span class="tag">${esc(pretty(a))}</span>`).join("")}</div></div>
       </article>`).join("") || `<div class="empty">No studios here. Try a larger radius.</div>`;
     $("#out").querySelectorAll("[data-slug]").forEach(el => el.onclick = () => openStudio(el.dataset.slug));
+    bindHearts($("#out"));
     hoverBind($("#out"));
   };
   S.view = { redraw, bar: studiosBar }; redraw();
@@ -520,8 +570,9 @@ async function openStudio(slug) {
     S.bookingsLoaded ? null : loadBookings(),  // bookings are already known; only fetch if the first load failed
   ]);
   S.gym = g.gymId;
-  if (!pins.length) { setMarkers([g], { fit: false }); map.setView([g.lat, g.lng], 15); }  // opened via link: nothing on the map yet
-  else { drawPins(); if (!map.getBounds().contains([g.lat, g.lng])) map.panTo([g.lat, g.lng]); }
+  if (!pins.length) setMarkers([g], { fit: false }); else drawPins();  // opened via link: nothing on the map yet
+  if (!map.getBounds().contains([g.lat, g.lng])) map.panTo([g.lat, g.lng]);  // selected studio off-screen → pan to it (never zoom)
+
   const imgs = g.images?.length ? g.images : g.image ? [img(g.image, "m")] : [];
   const a = g.address || {};
   let gi = 0;  // current photo, kept across redraws
@@ -547,7 +598,7 @@ async function openStudio(slug) {
           ${imgs.length > 1 ? `<button class="gnav prev" id="gPrev" aria-label="Previous photo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m15 5-7 7 7 7"/></svg></button>
           <button class="gnav next" id="gNext" aria-label="Next photo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 5 7 7-7 7"/></svg></button>
           <span class="gcount" id="gCount"></span>` : ""}</div>` : ""}
-        <h2>${esc(g.name)}</h2>
+        <div class="titlerow"><h2>${esc(g.name)}</h2>${heartBtn(g)}</div>
         <div class="addr">${esc([[a.street, a.streetNumber].filter(Boolean).join(" "), [a.zipCode, a.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}${openState(g.hours) ? " · " + openState(g.hours) : ""}</div>
         <div class="tags">${g.inApp ? `<span class="tag lime">Classes in app</span>` : ""}${g.plusOne ? `<span class="tag">Plus1</span>` : ""}${(g.activities || []).map(x => `<span class="tag">${esc(pretty(x))}</span>`).join("")}</div>
         ${g.offer ? `<div class="offer" onclick="this.classList.toggle('expanded')">${esc(strip(g.offer))}</div>` : ""}
@@ -560,6 +611,7 @@ async function openStudio(slug) {
     $("#back").onclick = back;
     bindGallery();
     bindCards($("#out"), upcoming);
+    bindHearts($("#out"));
   };
   const back = () => {
     S.tab = prevTab;
@@ -768,6 +820,31 @@ async function run() {
   } catch (e) { $("#out").innerHTML = ""; status(esc(e.message)); }
 }
 
+/* ---------------- favourites (synced with the Wellpass app) ---------------- */
+const heartBtn = g => `<button class="heart ${S.favs.has(g.gymId) ? "on" : ""}" data-fav="${esc(g.gymId)}" title="${S.favs.has(g.gymId) ? "Remove from favourites" : "Add to favourites"}" aria-label="Favourite"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-9.6-9.1C.9 8.6 2.9 5 6.4 5c2 0 3.6 1.1 4.6 2.6l1 1.4 1-1.4C14 6.1 15.6 5 17.6 5c3.5 0 5.5 3.6 4 6.9C19.5 16.4 12 21 12 21z"/></svg></button>`;
+async function loadFavs() { try { S.favs = new Set(await api("/api/favourites")); } catch {} syncFavBtn(); }
+const syncFavBtn = () => $("#favBtn").classList.toggle("on", S.favOnly);
+function bindHearts(root) {
+  root.querySelectorAll("[data-fav]").forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const id = b.dataset.fav, on = !S.favs.has(id);
+    on ? S.favs.add(id) : S.favs.delete(id);  // optimistic
+    root.querySelectorAll(`[data-fav="${CSS.escape(id)}"]`).forEach(x => x.classList.toggle("on", on));
+    drawPins();
+    try { S.favs = new Set(await api(on ? "/api/favourite" : "/api/unfavourite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gymId: id }) }));
+          toast(on ? "Added to favourites ♥" : "Removed from favourites"); }
+    catch (err) { on ? S.favs.delete(id) : S.favs.add(id); toast("Couldn't update favourites: " + err.message); }
+    if (S.favOnly && S.tab === "studios" && !S.view?.isDetail) { S.keepView = true; run().finally(() => S.keepView = false); return; }  // list of favourites changed
+    drawPins(); root.querySelectorAll(`[data-fav="${CSS.escape(id)}"]`).forEach(x => x.classList.toggle("on", S.favs.has(id)));
+  });
+}
+$("#favBtn").onclick = () => {
+  S.favOnly = !S.favOnly; store.set("favOnly", S.favOnly); syncFavBtn();
+  if (S.tab !== "studios" || S.view?.isDetail) { S.tab = "studios"; S.gym = null; }
+  run();  // favourites can be anywhere, so the map fits to them
+};
+syncFavBtn();
+
 /* ---------------- onboarding & account ---------------- */
 function setAuthed(on, me) {
   S.authed = on; if (me) S.me = me;
@@ -795,7 +872,7 @@ function showOnboarding(step) {
       $("#lGo").disabled = true; $("#lGo").textContent = "Logging in…"; $("#lErr").textContent = "";
       try {
         const me = await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("#lEmail").value, password: $("#lPw").value }) });
-        setAuthed(true, me); S.bookingsLoaded = false; loadBookings().catch(() => {}); showOnboarding("area");
+        setAuthed(true, me); S.bookingsLoaded = false; loadBookings().catch(() => {}); loadFavs(); showOnboarding("area");
       } catch (err) { $("#lErr").textContent = err.message; $("#lGo").disabled = false; $("#lGo").textContent = "Log in"; }
     };
   } else {
@@ -826,7 +903,7 @@ $("#acct").onclick = async () => {
     <div class="actions"><button class="btn ghost" value="cancel">Stay logged in</button><button class="btn danger" value="ok">Log out</button></div></div>`);
   if (!ok) return;
   await api("/api/logout", { method: "POST" }).catch(() => {});
-  setAuthed(false); S.bookings = []; S.watches = []; S.bookingsLoaded = false; showOnboarding("login");
+  setAuthed(false); S.bookings = []; S.watches = []; S.bookingsLoaded = false; S.favs.clear(); showOnboarding("login");
 };
 
 async function boot() {
@@ -834,6 +911,7 @@ async function boot() {
   setAuthed(st.loggedIn, st);
   document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
   if (!st.loggedIn) { S.tab = "studios"; showOnboarding("login"); run(); return; }  // studios are public, so the map fills in behind the login
+  await loadFavs();
   if (qp.get("studio")) return openStudio(qp.get("studio")).catch(e => status(esc(e.message)));
   if (S.tab !== "bookings") loadBookings().catch(() => {});  // once per page load; afterwards only after book/cancel/auto-book changes or ↻
   S.keepView = !!savedView; run().finally(() => S.keepView = false);

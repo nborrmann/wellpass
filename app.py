@@ -45,7 +45,11 @@ APP_UA = "Wellpass/3080 CFNetwork/3860.600.12 Darwin/25.5.0"
 
 # one shared HTTP session: keeps TCP/TLS connections to each host open and reuses them
 HTTP = requests.Session()
-HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16))
+# a pooled connection the server closed while idle fails with "connection reset" — retry those transparently,
+# but only for idempotent methods (never re-send a booking POST)
+_retry = requests.adapters.Retry(total=2, connect=2, read=2, status=0, backoff_factor=0.1,
+                                 allowed_methods=frozenset({"GET", "HEAD", "DELETE", "OPTIONS"}))
+HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=_retry))
 
 # ---------------------------------------------------------------- auth
 
@@ -168,7 +172,7 @@ def load_gyms():
         r.raise_for_status()
         OVERVIEW_FILE.write_bytes(r.content)
     _gyms[:] = [
-        {"gymId": g["g"], "slug": g["slug"], "name": g["a"], "lat": g["lat"], "lng": g["lng"],
+        {"gymId": g["g"], "oid": g["id"], "slug": g["slug"], "name": g["a"], "lat": g["lat"], "lng": g["lng"],
          "type": g.get("st"), "activities": [a["a"] for a in g.get("ac", [])],
          "inApp": bool((g.get("cbc") or {}).get("e")),
          "image": re.sub(r"_t$", "", g["bimg"]) if g.get("bimg") else None,  # append _t / _s / _m for size
@@ -195,6 +199,8 @@ def load_activities():
 def studio_detail(slug):
     r = HTTP.get(f"{GYMFINDER}/v1/gym", params={"slug": slug}, timeout=30)
     r.raise_for_status()
+    if not r.json():
+        raise LookupError(f"Studio “{slug}” not found")
     d = r.json()[0]
     return {
         "gymId": d.get("gymUUID"), "slug": d.get("slug"), "address": d.get("address"), "description": d.get("description"), "website": d.get("website"),
@@ -209,10 +215,15 @@ def km(lat1, lng1, lat2, lng2):
     return 12742 * math.asin(math.sqrt(a))
 
 
-def nearby(lat, lng, radius, q="", in_app=True, limit=3000):
+def nearby(lat, lng, radius, q="", in_app=True, limit=3000, only=None):
     q = q.lower()
     out = []
     for g in _gyms:
+        if only is not None:  # explicit set of studios (favourites): ignore radius and in-app filter
+            if g["gymId"] not in only:
+                continue
+            out.append({**g, "km": round(km(lat, lng, g["lat"], g["lng"]), 2)})
+            continue
         if in_app and not g["inApp"]:
             continue
         if q and q not in g["name"].lower():
@@ -222,6 +233,18 @@ def nearby(lat, lng, radius, q="", in_app=True, limit=3000):
             out.append({**g, "km": round(d, 2)})
     out.sort(key=lambda g: g["km"])
     return out[:limit]
+
+
+_favs = {"at": 0.0, "map": None}  # gymId -> favourite id, synced with the Wellpass app
+FAV_TTL = 6 * 3600
+
+
+def favourites(force=False):
+    if force or _favs["map"] is None or time.time() - _favs["at"] > FAV_TTL:
+        r = mwa("GET", "/gym-finder/v1/listings")
+        r.raise_for_status()
+        _favs.update(at=time.time(), map={f["gym"]["g"]: f["id"] for f in r.json().get("favourites") or []})
+    return _favs["map"]
 
 
 _scache = {}  # (gym, from, to) -> (time, sessions); short cache so day/tab switches are instant
@@ -380,8 +403,11 @@ class Handler(BaseHTTPRequestHandler):
                                        "name": (creds or {}).get("name"), "studios": len(_gyms),
                                        "autoBooking": sum(w.get("status") == "watching" for w in load_watches())})
             if u.path == "/api/studios":
+                only = set(favourites()) if q.get("favs") == "1" else None
                 return self.send(200, nearby(float(q["lat"]), float(q["lng"]), float(q.get("radius", 5)),
-                                             q.get("q", ""), q.get("inApp", "1") == "1"))
+                                             q.get("q", ""), q.get("inApp", "1") == "1", only=only))
+            if u.path == "/api/favourites":
+                return self.send(200, list(favourites(force=q.get("fresh") == "1")))
             if u.path == "/api/classes":  # by gymId, or by slug so the page can load it in parallel with /api/studio
                 gym = _by_id.get(q.get("gymId")) or next((g for g in _gyms if g["slug"] == q.get("slug")), None)
                 gym_id = q.get("gymId") or (gym or {}).get("gymId")
@@ -406,6 +432,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(404, {"error": "not found"})
         except AuthRequired:
             self.send(401, {"error": "login_required"})
+        except LookupError as e:
+            self.send(404, {"error": str(e)})
         except requests.HTTPError as e:
             self.send(502, {"error": f"upstream {e.response.status_code}", "detail": e.response.text[:500]})
         except Exception as e:
@@ -425,6 +453,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send(401, {"error": str(e)})
                 name = " ".join(filter(None, [me.get("firstName"), me.get("lastName")])) or None
                 private_write(CRED_FILE, json.dumps({"email": email, "password": password, "name": name}))
+                _favs.update(at=0.0, map=None)
                 LEGACY_LOGIN.unlink(missing_ok=True)
                 print(f"  logged in as {email}")
                 return self.send(200, {"loggedIn": True, "email": email, "name": name})
@@ -434,8 +463,21 @@ class Handler(BaseHTTPRequestHandler):
                         f.unlink(missing_ok=True)
                     _tok.update(id=None, exp=0.0)
                 _scache.clear()
+                _favs.update(at=0.0, map=None)
                 print("  logged out")
                 return self.send(200, {"loggedIn": False})
+            if self.path in ("/api/favourite", "/api/unfavourite"):
+                favs, gym = favourites(), _by_id.get(body.get("gymId")) or {}
+                if self.path == "/api/favourite" and gym.get("gymId") not in favs:
+                    r = mwa("POST", "/gym-finder/v1/favourites", json={"gymId": gym.get("oid")})
+                    r.raise_for_status()
+                    favs[gym["gymId"]] = r.json()["id"]
+                elif self.path == "/api/unfavourite" and body.get("gymId") in favs:
+                    r = mwa("DELETE", f"/gym-finder/v1/favourites/{favs[body['gymId']]}")
+                    if r.status_code not in (204, 404):
+                        r.raise_for_status()
+                    favs.pop(body["gymId"], None)
+                return self.send(200, list(favs))
             if self.path in ("/api/watch", "/api/unwatch"):
                 with _wlock:
                     ws = [w for w in load_watches() if w["id"] != body["id"]]
@@ -461,6 +503,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200 if r.ok else 502, data if r.ok else {"error": f"upstream {r.status_code}", "detail": data})
         except AuthRequired:
             self.send(401, {"error": "login_required"})
+        except requests.HTTPError as e:
+            self.send(502, {"error": f"upstream {e.response.status_code}", "detail": e.response.text[:500]})
         except Exception as e:
             self.send(500, {"error": repr(e)})
 
