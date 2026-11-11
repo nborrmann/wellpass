@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wellpass Classes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #f4f3ef; --card: #ffffff; --ink: #111111; --muted: #6f6f6a; --line: #e4e2dc; --soft: #ecebe6;
+    --lime: #d8f34a; --lime-ink: #1a2200; --red: #c4321c; --green: #1f8a4c; --amber: #a86a00;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.06);
+    --btn: #111111; --btn-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f0f0e; --card: #1a1a19; --ink: #f2f2ee; --muted: #9b9b95; --line: #2c2c2a; --soft: #242422;
+      --red: #ff7a66; --green: #5fd38f; --amber: #f0b44c; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+      --btn: #f2f2ee; --btn-ink: #111111; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 "Inter Tight", -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; }
+  button, input, select { font: inherit; color: inherit; }
+  img { display: block; }
+
+  /* ---------- header ---------- */
+  .top { background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 20px 0; position: relative; z-index: 1000; }
+  .toprow { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .brand { font-weight: 800; letter-spacing: .32em; font-size: 15px; line-height: 1.05; white-space: nowrap; }
+  .brand small { display: block; letter-spacing: .5em; font-weight: 500; font-size: 10px; color: var(--muted); margin-top: 3px; }
+  .search { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; align-items: center; min-width: 0; }
+  .field { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px 0 16px; height: 44px; flex: 1 1 220px; min-width: 0; }
+  .field input { border: 0; background: none; outline: none; flex: 1; min-width: 0; height: 100%; }
+  .field:focus-within { border-color: var(--ink); }
+  .iconbtn { border: 0; background: none; width: 34px; height: 34px; border-radius: 999px; cursor: pointer; display: grid; place-items: center; color: var(--muted); }
+  .iconbtn:hover { background: var(--soft); color: var(--ink); }
+  select.pill { height: 44px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); padding: 0 14px; cursor: pointer; }
+  .tabs { display: flex; gap: 26px; margin-top: 10px; align-items: center; }
+  .live { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+  .live.off i { background: var(--muted); }
+  .tabs button { border: 0; background: none; padding: 10px 0 12px; cursor: pointer; font-weight: 600; color: var(--muted); border-bottom: 3px solid transparent; display: flex; gap: 6px; align-items: center; }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+  .badge { background: var(--lime); color: var(--lime-ink); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 7px; }
+
+  .actbtn { height: 44px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); padding: 0 16px; cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .actbtn.on { background: var(--btn); color: var(--btn-ink); border-color: var(--btn); }
+  .pop { position: fixed; z-index: 2000; width: 380px; max-width: calc(100vw - 24px); max-height: min(560px, calc(100vh - 140px)); background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 16px 50px rgba(0,0,0,.22); display: flex; flex-direction: column; overflow: hidden; }
+  .pop .head { padding: 16px 16px 8px; }
+  .pop .head .field { flex: none; }
+  .pop .sel { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .pop .sel button { border: 0; background: var(--btn); color: var(--btn-ink); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-weight: 500; }
+  .pop ul { list-style: none; margin: 0; padding: 0 16px; overflow-y: auto; flex: 1; }
+  .pop li { padding: 13px 2px; border-bottom: 1px solid var(--line); cursor: pointer; display: flex; justify-content: space-between; gap: 10px; font-size: 16px; }
+  .pop li:hover { color: var(--muted); }
+  .pop li.on { font-weight: 700; } .pop li.on::after { content: "✓"; }
+  .pop li small { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .pop .foot { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
+  .pop .reset { border: 0; background: none; cursor: pointer; font-weight: 600; text-decoration: underline; color: var(--ink); }
+
+  /* ---------- layout ---------- */
+  .split { flex: 1; display: grid; grid-template-columns: minmax(380px, 520px) 1fr; min-height: 0; }
+  .list { overflow-y: auto; padding: 14px 18px 60px; min-width: 0; }
+  .mapwrap { position: relative; border-left: 1px solid var(--line); }
+  #map { position: absolute; inset: 0; background: var(--soft); }
+  #searchArea { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 500; }
+  @media (max-width: 860px) {
+    .split { grid-template-columns: minmax(0, 1fr); grid-template-rows: 40vh minmax(0, 1fr); }
+    .mapwrap { order: -1; border-left: 0; border-bottom: 1px solid var(--line); }
+    .list { padding: 12px 16px 60px; }
+    .top { padding: 10px 16px 0; }
+    .brand { display: none; }
+    .toprow { display: block; }
+    .field { flex: 1 1 100%; height: 40px; }
+    select.pill { height: 40px; }
+    .search { gap: 8px; }
+    .cls { grid-template-columns: 56px 1fr; gap: 12px; }
+    .thumb { width: 56px; height: 56px; }
+  }
+
+  /* ---------- chips & buttons ---------- */
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 14px; cursor: pointer; white-space: nowrap; font-weight: 500; font-size: 14px; }
+  .chip.on { background: var(--btn); color: var(--btn-ink); border-color: var(--btn); }
+  .chip.day { display: flex; flex-direction: column; align-items: center; padding: 6px 14px; border-radius: 14px; line-height: 1.15; }
+  .chip.day b { font-size: 17px; } .chip.day span { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; opacity: .75; }
+  .btn { border: 0; background: var(--btn); color: var(--btn-ink); border-radius: 999px; padding: 9px 18px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .btn.ghost { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  .btn.danger { background: none; color: var(--red); border: 1px solid currentColor; }
+  .btn.float { box-shadow: var(--shadow); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .tag { white-space: nowrap; flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; background: var(--soft); border-radius: 8px; padding: 3px 9px; color: var(--ink); }
+  .tag.lime { background: var(--lime); color: var(--lime-ink); font-weight: 600; }
+  .tag.amber, .badge.amber { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--ink); font-weight: 600; }
+  .cls.watching { border-color: color-mix(in srgb, var(--amber) 70%, transparent); }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: pl 1.6s infinite; }
+  @keyframes pl { 50% { opacity: .25; } }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .status { color: var(--muted); font-size: 13.5px; margin: 4px 0 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .status .clear { border: 0; background: var(--btn); color: var(--btn-ink); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; }
+  .group { font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 2px 8px; }
+  .open { color: var(--green); font-weight: 600; } .closed { color: var(--red); font-weight: 600; }
+
+  /* ---------- class card ---------- */
+  .cls { display: grid; grid-template-columns: 72px 1fr; gap: 14px; background: var(--card); border-radius: 16px; padding: 12px; margin-bottom: 10px; box-shadow: var(--shadow); border: 2px solid transparent; transition: border-color .15s, transform .15s; }
+  .cls:hover, .cls.hl { border-color: var(--ink); }
+  .cls.pick { cursor: pointer; } .cls.pick .foot { gap: 10px; } .cls.pick .foot .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  a.clear { text-decoration: none; background: var(--soft) !important; color: var(--ink) !important; }
+  .cls.booked { border-color: var(--lime); }
+  .cls > div { min-width: 0; }
+  .thumb { width: 72px; height: 72px; border-radius: 12px; object-fit: cover; background: var(--soft); cursor: pointer; }
+  .thumb.ph { display: grid; place-items: center; font-weight: 800; font-size: 22px; color: var(--muted); }
+  .cls .when { display: flex; gap: 8px; align-items: baseline; }
+  .cls .when b { font-size: 18px; font-variant-numeric: tabular-nums; }
+  .cls .when span { color: var(--muted); font-size: 13px; }
+  .cls .title { font-weight: 700; font-size: 16px; margin: 1px 0 2px; }
+  .cls .sub { color: var(--muted); font-size: 13.5px; }
+  .cls .sub a { color: inherit; text-decoration: none; font-weight: 600; } .cls .sub a:hover { text-decoration: underline; }
+  .cls .foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .cap { flex: 1; min-width: 0; }
+  .cap .bar { height: 6px; background: var(--soft); border-radius: 99px; overflow: hidden; }
+  .cap .bar i { display: block; height: 100%; background: var(--ink); border-radius: 99px; }
+  .cap .bar i.hot { background: var(--amber); } .cap .bar i.full { background: var(--red); }
+  .cap small { display: block; font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  details.more summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 6px; list-style: none; }
+  details.more summary::before { content: "＋ "; } details.more[open] summary::before { content: "－ "; }
+  details.more p { white-space: pre-wrap; font-size: 13.5px; margin: 6px 0 0; color: var(--muted); }
+
+  /* ---------- studio card ---------- */
+  .studio { background: var(--card); border-radius: 18px; overflow: hidden; margin-bottom: 14px; box-shadow: var(--shadow); cursor: pointer; border: 2px solid transparent; transition: border-color .15s; }
+  .studio:hover, .studio.hl { border-color: var(--ink); }
+  .studio .hero { width: 100%; height: 170px; object-fit: cover; background: var(--soft); }
+  .studio .hero.ph { display: grid; place-items: center; font-weight: 800; font-size: 40px; color: var(--muted); letter-spacing: .1em; }
+  .studio .body { padding: 14px 16px 16px; }
+  .studio h3 { margin: 0 0 4px; font-size: 19px; line-height: 1.2; }
+  .studio .line { font-size: 14px; color: var(--muted); margin-bottom: 10px; }
+
+  /* ---------- studio detail ---------- */
+  .back { margin-bottom: 12px; }
+  .gallery { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; border-radius: 18px; scrollbar-width: none; }
+  .gallery img { flex: 0 0 100%; height: 240px; object-fit: cover; scroll-snap-align: start; border-radius: 18px; background: var(--soft); }
+  .detail h2 { font-size: 26px; line-height: 1.15; margin: 14px 0 4px; }
+  .detail .addr { color: var(--muted); margin-bottom: 10px; }
+  .detail .offer { background: var(--card); border-radius: 14px; padding: 12px 14px; font-size: 14px; margin: 12px 0; box-shadow: var(--shadow); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6.2em; overflow: hidden; cursor: pointer; position: relative; }
+  .detail .offer::after { content: "Show more"; position: absolute; right: 0; bottom: 0; left: 0; padding: 18px 14px 8px; text-align: right; font-weight: 600; background: linear-gradient(transparent, var(--card) 55%); }
+  .detail .offer.expanded { max-height: none; } .detail .offer.expanded::after { display: none; }
+  .links { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+
+  .empty { text-align: center; color: var(--muted); padding: 40px 10px; }
+  .skel { height: 96px; border-radius: 16px; margin-bottom: 10px; background: linear-gradient(90deg, var(--soft), var(--card), var(--soft)); background-size: 200% 100%; animation: sh 1.2s infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+
+  /* ---------- map markers ---------- */
+  .pin { width: 46px; height: 46px; border-radius: 50%; border: 3px solid var(--ink); background: var(--card) center/cover no-repeat; box-shadow: 0 2px 8px rgba(0,0,0,.35); position: relative; transition: transform .15s; }
+  .pin::after { content: ""; position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%); border: 6px solid transparent; border-top: 7px solid var(--ink); }
+  .pin b { position: absolute; top: -8px; right: -10px; background: var(--lime); color: var(--lime-ink); border-radius: 999px; font-size: 11px; padding: 1px 6px; border: 2px solid var(--ink); }
+  .pin.ph { display: grid; place-items: center; font-weight: 800; font-size: 13px; color: var(--muted); }
+  .pin.hl, .pin.sel { transform: scale(1.25); z-index: 1000; }
+  .pin.sel { border-color: var(--lime); } .pin.sel::after { border-top-color: var(--lime); }
+  .cluster { width: 40px; height: 40px; border-radius: 50%; background: var(--card); border: 3px solid var(--ink); display: grid; place-items: center; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.3); color: var(--ink); }
+  .me { width: 16px; height: 16px; border-radius: 50%; background: #2f7cf6; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(47,124,246,.25); }
+  .leaflet-div-icon { background: none; border: 0; }
+  .tiles { filter: grayscale(1) contrast(.9) brightness(1.06); }
+  @media (prefers-color-scheme: dark) { .tiles { filter: grayscale(1) invert(1) contrast(.85) brightness(.9); } }
+  .leaflet-popup-content-wrapper { border-radius: 12px; }
+
+  dialog { border: 0; border-radius: 20px; background: var(--card); color: var(--ink); max-width: 440px; width: calc(100% - 32px); padding: 0; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog .dimg { width: 100%; height: 150px; object-fit: cover; }
+  dialog .dbody { padding: 18px 20px 20px; }
+  dialog h3 { margin: 0 0 6px; font-size: 20px; }
+  .warn { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--ink); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--btn); color: var(--btn-ink); padding: 11px 18px; border-radius: 999px; font-weight: 600; z-index: 3000; box-shadow: var(--shadow); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="toprow">
+    <div class="brand">WELLPASS<small>CLASSES</small></div>
+    <div class="search">
+      <label class="field"><input id="place" placeholder="City, address or postal code" autocomplete="off">
+        <button class="iconbtn" id="locate" title="Use my location"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></label>
+      <label class="field"><input id="filter" placeholder="Class, studio or teacher" autocomplete="off">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:10px;color:var(--muted)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></label>
+      <select class="pill" id="radius" title="Radius"><option value="1">1 km</option><option value="2">2 km</option><option value="3">3 km</option><option value="5">5 km</option><option value="12" selected>12 km · all Munich</option><option value="20">20 km</option></select>
+      <button class="actbtn" id="actBtn">Activities <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg></button>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button data-tab="studios">Studios</button>
+    <button data-tab="bookings">My bookings <span class="badge" id="bcount" hidden></span><span class="badge amber" id="wcount" hidden title="On auto-book"></span></button>
+    <span class="live" id="live" title="Bookings and auto-book refresh every 10 s"><i></i><span>Live</span></span>
+  </nav>
+</header>
+
+<div class="split">
+  <section class="list" id="list">
+    <div id="bar"></div>
+    <div class="status" id="status"></div>
+    <div id="out"></div>
+  </section>
+  <div class="mapwrap">
+    <div id="map"></div>
+    <button class="btn float" id="searchArea" hidden>Search this area</button>
+  </div>
+</div>
+
+<div class="pop" id="actPop" hidden></div>
+
+<dialog id="dlg"><form method="dialog">
+  <div id="dlgBody"></div>
+</form></dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const strip = h => { const d = document.createElement("div"); d.innerHTML = String(h || "").replace(/<br\s*\/?>|<\/p>/gi, "\n"); return d.textContent.replace(/[\u00a0\u202f]/g, " ").trim(); };
+const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+const hm = d => new Date(d).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+const dayLong = d => new Date(d).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+const mins = c => Math.round((new Date(c.end) - new Date(c.start)) / 6e4);
+const img = (base, size) => base ? `${base}_${size}` : "";
+const initials = n => esc(String(n || "?").replace(/[^A-Za-zÄÖÜäöü0-9 ]/g, "").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase());
+const pretty = a => String(a || "").toLowerCase().replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
+
+/* ---------------- state ---------------- */
+const MUNICH = { lat: 48.137, lng: 11.575, label: "München" };
+const S = {
+  loc: store.get("loc") || MUNICH, tab: store.get("tab") === "bookings" ? "bookings" : "studios", gym: null,
+  inAppOnly: store.get("inAppOnly") ?? true, acts: new Set(store.get("acts") || []), actNames: {}, bookings: [], view: null,
+};
+const qp = new URLSearchParams(location.search);
+if (qp.get("tab") === "bookings") S.tab = "bookings";
+if (qp.get("q")) S.loc = null, $("#place").value = qp.get("q");
+if (S.loc) $("#place").value = S.loc.label;
+if (store.get("radius2")) $("#radius").value = store.get("radius2");
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error || r.status) + (j.detail ? ": " + (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail)) : ""));
+  return j;
+}
+const status = html => $("#status").innerHTML = html;
+const toast = t => { const el = document.createElement("div"); el.className = "toast"; el.textContent = t; document.body.append(el); setTimeout(() => el.remove(), 3200); };
+const skeleton = n => $("#out").innerHTML = Array.from({ length: n }, () => `<div class="skel"></div>`).join("");
+const isoZ = d => d.toISOString().replace(/\.\d+Z$/, "Z");
+function dayStart(i) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + i); return d; }
+function range(i, days = 1) { const a = dayStart(i), b = dayStart(i + days); return `from=${isoZ(a)}&to=${isoZ(b)}`; }
+
+/* ---------------- opening hours ---------------- */
+const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+function openState(h) {
+  if (!h) return "";
+  const now = new Date(), cur = now.getHours() * 60 + now.getMinutes();
+  const slots = d => Array.isArray(h[DAYS[d]]) ? h[DAYS[d]] : [];
+  const m = t => t.hour * 60 + t.minute, t2 = t => `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
+  for (const s of slots(now.getDay())) if (cur >= m(s.start) && cur < m(s.end)) return `<span class="open">Open</span> · until ${t2(s.end)}`;
+  for (let i = 0; i < 7; i++) {
+    const d = (now.getDay() + i) % 7;
+    const nxt = slots(d).filter(s => i > 0 || m(s.start) > cur).sort((a, b) => m(a.start) - m(b.start))[0];
+    if (nxt) return `<span class="closed">Closed</span> · opens ${i === 0 ? "" : i === 1 ? "tomorrow " : DAYS[d].slice(0, 3).replace(/^./, c => c.toUpperCase()) + " "}${t2(nxt.start)}`;
+  }
+  return "";
+}
+
+/* ---------------- map ---------------- */
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+const savedView = store.get("mapView");  // {lat,lng,zoom} — restored on reload instead of re-fitting
+const map = L.map("map", { zoomControl: false }).setView(savedView ? [savedView.lat, savedView.lng] : [S.loc?.lat || 48.137, S.loc?.lng || 11.575], savedView?.zoom || 13);
+map.on("moveend", () => { const c = map.getCenter(); store.set("mapView", { lat: c.lat, lng: c.lng, zoom: map.getZoom() }); });
+L.control.zoom({ position: "bottomright" }).addTo(map);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, className: "tiles", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+}).addTo(map);
+const pinLayer = L.layerGroup().addTo(map);
+const MIN_CLUSTER = 4, CLUSTER_PX = 44;   // only merge 4+ overlapping studios; 2–3 always show as pins
+let meMarker = null, markers = {}, programmatic = false, pins = [];
+
+function drawPins() {
+  pinLayer.clearLayers(); markers = {};
+  const z = map.getZoom();
+  const pts = pins.map(p => ({ ...p, xy: map.project([p.g.lat, p.g.lng], z) }));
+  const used = new Array(pts.length).fill(false), singles = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (used[i]) continue;
+    const grp = [pts[i]]; used[i] = true;
+    for (let j = i + 1; j < pts.length; j++)
+      if (!used[j] && pts[i].xy.distanceTo(pts[j].xy) < CLUSTER_PX) { grp.push(pts[j]); used[j] = true; }
+    if (grp.length >= MIN_CLUSTER && z < map.getMaxZoom()) {
+      const ll = L.latLngBounds(grp.map(p => [p.g.lat, p.g.lng]));
+      L.marker(ll.getCenter(), { icon: L.divIcon({ html: `<div class="cluster">${grp.length}</div>`, className: "", iconSize: [40, 40] }) })
+        .on("click", () => map.fitBounds(ll, { padding: [60, 60], maxZoom: Math.min(map.getMaxZoom(), z + 3) }))
+        .addTo(pinLayer);
+    } else singles.push(...grp);
+  }
+  // spread pins that would (almost) cover each other onto a small ring around their common centre
+  const SEP = 34, PIN = 50, done = new Array(singles.length).fill(false);
+  for (let i = 0; i < singles.length; i++) {
+    if (done[i]) continue;
+    const grp = [singles[i]]; done[i] = true;
+    for (let k = 0; k < grp.length; k++)  // grow transitively so chains of near pins are spread together
+      for (let j = 0; j < singles.length; j++)
+        if (!done[j] && grp[k].xy.distanceTo(singles[j].xy) < SEP) { grp.push(singles[j]); done[j] = true; }
+    const cx = grp.reduce((a, p) => a + p.xy.x, 0) / grp.length, cy = grp.reduce((a, p) => a + p.xy.y, 0) / grp.length;
+    const R = grp.length === 1 ? 0 : Math.max(PIN / 2 + 2, (PIN * grp.length) / (2 * Math.PI));
+    grp.forEach((p, k) => {
+      const ang = (2 * Math.PI * k) / grp.length - Math.PI / 2;
+      const ll = R ? map.unproject(L.point(cx + R * Math.cos(ang), cy + R * Math.sin(ang)), z) : L.latLng(p.g.lat, p.g.lng);
+      const m = L.marker(ll, { icon: pinIcon(p.g, p.count, S.gym === p.g.gymId), title: p.g.name, riseOnHover: true });
+      m.on("click", () => p.onClick && p.onClick(p.g));
+      markers[p.g.gymId] = m; m.addTo(pinLayer);
+    });
+  }
+}
+map.on("zoomend", drawPins);
+
+function pinIcon(g, count, sel) {
+  const bg = g.image ? `style="background-image:url('${esc(img(g.image, "t"))}')"` : "";
+  return L.divIcon({ className: "", iconSize: [46, 46], iconAnchor: [23, 55],
+    html: `<div class="pin ${g.image ? "" : "ph"} ${sel ? "sel" : ""}" ${bg}>${g.image ? "" : initials(g.name)}${count ? `<b>${count}</b>` : ""}</div>` });
+}
+
+function setMarkers(gyms, { counts = {}, fit = true, onClick } = {}) {
+  pins = gyms.filter(g => g.lat != null).map(g => ({ g, count: counts[g.gymId], onClick }));
+  drawPins();
+  if (S.loc) {
+    if (meMarker) meMarker.remove();
+    meMarker = L.marker([S.loc.lat, S.loc.lng], { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [16, 16] }), interactive: false }).addTo(map);
+  }
+  if (fit && !S.keepView) {
+    const pts = gyms.filter(g => g.lat != null).map(g => [g.lat, g.lng]);
+    if (S.loc) pts.push([S.loc.lat, S.loc.lng]);
+    programmatic = true;
+    if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 }); else if (pts.length) map.setView(pts[0], 15);
+    setTimeout(() => programmatic = false, 600);
+  }
+}
+function highlight(gymId, on) {
+  const el = markers[gymId]?.getElement()?.querySelector(".pin");
+  if (el) el.classList.toggle("hl", on);
+}
+function hoverBind(root) {
+  root.querySelectorAll("[data-gymhl]").forEach(el => {
+    el.onmouseenter = () => highlight(el.dataset.gymhl, true);
+    el.onmouseleave = () => highlight(el.dataset.gymhl, false);
+  });
+}
+// only offer "Search this area" when part of the visible map lies outside the loaded radius
+function areaCovered() {
+  if (!S.loc) return false;
+  const loaded = L.latLng(S.loc.lat, S.loc.lng).toBounds(2 * Number($("#radius").value) * 1000).pad(0.1);
+  return loaded.contains(map.getBounds());
+}
+map.on("moveend", () => { $("#searchArea").hidden = S.tab === "bookings" || areaCovered(); });
+$("#searchArea").onclick = () => {
+  const c = map.getCenter();
+  S.loc = { lat: c.lat, lng: c.lng, label: "Map area" }; $("#place").value = S.loc.label; store.set("loc", S.loc);
+  $("#searchArea").hidden = true; S.gym = null; S.keepView = true;  // keep the map where the user put it
+  run().finally(() => S.keepView = false);
+};
+
+/* ---------------- location ---------------- */
+async function resolvePlace() {
+  const text = $("#place").value.trim();
+  if (S.loc && text === S.loc.label) return S.loc;
+  if (!text) throw new Error("Enter a city or address above, or tap the locate button.");
+  status("Looking up location…");
+  const g = await api("/api/geocode?q=" + encodeURIComponent(text));
+  if (!g) throw new Error(`Couldn't find “${text}”.`);
+  S.loc = { lat: g.lat, lng: g.lng, label: text }; store.set("loc", S.loc);
+  return S.loc;
+}
+$("#locate").onclick = () => navigator.geolocation.getCurrentPosition(p => {
+  S.loc = { lat: p.coords.latitude, lng: p.coords.longitude, label: "My location" };
+  $("#place").value = S.loc.label; store.set("loc", S.loc); S.gym = null; run();
+}, e => toast("Location unavailable: " + e.message));
+$("#place").addEventListener("keydown", e => { if (e.key === "Enter") { S.gym = null; run(); } });
+$("#radius").onchange = () => { store.set("radius2", $("#radius").value); S.gym = null; run(); };
+$("#filter").addEventListener("input", () => S.view?.redraw?.());
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; store.set("tab", S.tab); S.gym = null; run(); });
+
+/* ---------------- bookings ---------------- */
+async function loadBookings() {
+  const a = new Date(Date.now() - 864e5), b = new Date(Date.now() + 60 * 864e5);
+  [S.bookings, S.watches] = await Promise.all([api(`/api/bookings?from=${isoZ(a)}&to=${isoZ(b)}`), api("/api/watches")]);
+  const nw = S.watches.filter(w => w.status === "watching").length;
+  $("#wcount").hidden = !nw; $("#wcount").textContent = `⏳ ${nw}`;
+  const n = S.bookings.filter(x => x.status === "BOOKED" && new Date(x.session.end) > new Date()).length;
+  $("#bcount").hidden = !n; $("#bcount").textContent = n;
+  return S.bookings;
+}
+const bookingFor = sid => S.bookings.find(b => b.session.id === sid && b.status === "BOOKED");
+const watchFor = sid => (S.watches || []).find(w => w.id === sid && w.status === "watching");
+
+/* ---------------- class card ---------------- */
+function capHtml(c) {
+  if (c.capacity == null) return `<div class="cap"></div>`;
+  const pct = Math.min(100, Math.round(100 * (c.booked || 0) / c.capacity));
+  const free = c.capacity - (c.booked || 0);
+  const wl = (c.waitlistCapacity || 0) - (c.waitlistBooked || 0);
+  const label = free > 0 ? `<b>${free}</b> of ${c.capacity} spots left` : `Full${c.waitlistCapacity ? ` · waitlist ${wl > 0 ? wl + " left" : "full"}` : ""}`;
+  return `<div class="cap"><div class="bar"><i class="${free <= 0 ? "full" : pct >= 80 ? "hot" : ""}" style="width:${pct}%"></i></div><small>${label}</small></div>`;
+}
+function actionHtml(c) {
+  const b = bookingFor(c.id);
+  if (b) return `<span class="tag lime">✓ Booked</span><button class="btn danger" data-cancel="${esc(b.id)}">Cancel</button>`;
+  if (watchFor(c.id)) return `<span class="tag amber"><span class="pulse"></span> Auto-booking</span><button class="btn ghost" data-unwatch="${esc(c.id)}">Stop</button>`;
+  if (c.bookingWindowStart && new Date(c.bookingWindowStart) > new Date())
+    return `<span class="tag">Opens ${esc(new Date(c.bookingWindowStart).toLocaleDateString("en-GB", { weekday: "short" }))} ${esc(hm(c.bookingWindowStart))}</span><button class="btn ghost" data-watch="${esc(c.id)}">Auto-book</button>`;
+  if (c.capacity != null && c.capacity - (c.booked || 0) <= 0) return `<button class="btn" data-watch="${esc(c.id)}">Auto-book</button>`;
+  return `<button class="btn" data-book="${esc(c.id)}">Book</button>`;
+}
+function classCard(c, { showGym = true } = {}) {
+  const desc = strip(c.description);
+  const thumb = c.gymImage ? `<img class="thumb" loading="lazy" src="${esc(img(c.gymImage, "t"))}" alt="" data-studio="${esc(c.gymSlug)}">`
+                           : `<div class="thumb ph" data-studio="${esc(c.gymSlug)}">${initials(c.gymName)}</div>`;
+  return `<article class="cls ${bookingFor(c.id) ? "booked" : watchFor(c.id) ? "watching" : ""}" data-gymhl="${esc(c.gymId)}">
+    ${thumb}
+    <div>
+      <div class="when"><b>${esc(hm(c.start))}</b><span>${mins(c)} min${c.room ? " · " + esc(c.room) : ""}</span></div>
+      <div class="title">${esc(c.name)}</div>
+      <div class="sub">${[showGym && `<a href="#" data-studio="${esc(c.gymSlug)}">${esc(c.gymName)}</a>`, showGym && c.km != null && `${c.km.toFixed(1)} km`, c.instructor && `with ${esc(c.instructor)}`].filter(Boolean).join(" · ")}</div>
+      <div class="foot">${capHtml(c)}${actionHtml(c)}</div>
+      ${desc ? `<details class="more" data-k="${esc(c.id)}"><summary>About this class</summary><p>${esc(desc)}</p></details>` : ""}
+    </div>
+  </article>`;
+}
+function bindCards(root, list) {
+  root.querySelectorAll("[data-book]").forEach(b => b.onclick = () => book(list.find(c => c.id === b.dataset.book)));
+  root.querySelectorAll("[data-cancel]").forEach(b => b.onclick = () => cancel(S.bookings.find(x => x.id === b.dataset.cancel)));
+  root.querySelectorAll("[data-watch]").forEach(b => b.onclick = () => watch(list.find(c => c.id === b.dataset.watch)));
+  root.querySelectorAll("[data-unwatch]").forEach(b => b.onclick = () => unwatch(b.dataset.unwatch));
+  root.querySelectorAll("[data-studio]").forEach(el => el.onclick = e => { e.preventDefault(); openStudio(el.dataset.studio); });
+  hoverBind(root);
+}
+const textMatch = c => { const f = $("#filter").value.trim().toLowerCase(); return !f || [c.name, c.gymName, c.instructor, c.room].join(" ").toLowerCase().includes(f); };
+function studiosBar() {
+  $("#bar").innerHTML = `<div class="chips"><button class="chip ${S.inAppOnly ? "on" : ""}" id="inapp">Bookable in app</button><button class="chip ${!S.inAppOnly ? "on" : ""}" id="allst">All studios</button></div>`;
+  $("#inapp").onclick = () => { S.inAppOnly = true; store.set("inAppOnly", true); run(); };
+  $("#allst").onclick = () => { S.inAppOnly = false; store.set("inAppOnly", false); run(); };
+}
+
+async function viewStudios() {
+  studiosBar();
+  const l = await resolvePlace();
+  skeleton(3); status("Loading studios…");
+  const list = await api(`/api/studios?lat=${l.lat}&lng=${l.lng}&radius=${$("#radius").value}&inApp=${S.inAppOnly ? 1 : 0}`);
+  let firstDraw = true;
+  const redraw = () => {
+    const f = $("#filter").value.trim().toLowerCase();
+    const pop = list.filter(g => !f || (g.name + " " + g.activities.join(" ")).toLowerCase().includes(f));
+    const shown = pop.filter(actMatch);
+    S.pop = pop;
+    setMarkers(shown, { fit: firstDraw, onClick: g => openStudio(g.slug) }); firstDraw = false;
+    status(`<span><b>${shown.length}</b> studios within ${$("#radius").value} km</span>`);
+    $("#out").innerHTML = shown.map(g => `<article class="studio" data-slug="${esc(g.slug)}" data-gymhl="${esc(g.gymId)}">
+        ${g.image ? `<img class="hero" loading="lazy" src="${esc(img(g.image, "s"))}" alt="">` : `<div class="hero ph">${initials(g.name)}</div>`}
+        <div class="body"><h3>${esc(g.name)}</h3>
+          <div class="line">${g.km.toFixed(1)} km${openState(g.hours) ? " · " + openState(g.hours) : ""}</div>
+          <div class="tags">${g.inApp ? `<span class="tag lime">Classes in app</span>` : ""}${g.plusOne ? `<span class="tag">Plus1</span>` : ""}
+            ${g.activities.slice(0, 4).map(a => `<span class="tag">${esc(pretty(a))}</span>`).join("")}</div></div>
+      </article>`).join("") || `<div class="empty">No studios here. Try a larger radius.</div>`;
+    $("#out").querySelectorAll("[data-slug]").forEach(el => el.onclick = () => openStudio(el.dataset.slug));
+    hoverBind($("#out"));
+  };
+  S.view = { redraw, bar: studiosBar }; redraw();
+}
+
+async function openStudio(slug) {
+  const from = S.view?.isDetail ? S.view.from : { tab: S.tab, view: S.view, gym: S.gym };  // studio→studio keeps the original back target
+  const prevTab = from.tab, prevView = from.view;
+  $("#bar").innerHTML = ""; skeleton(3); status("");
+  $("#list").scrollTop = 0;
+  const g = await api(`/api/studio?slug=${encodeURIComponent(slug)}`);
+  const curl = `/api/classes?gymId=${g.gymId}&${range(0, 7)}`;
+  let [classes] = await Promise.all([g.inApp ? api(curl) : Promise.resolve([]), loadBookings()]);
+  S.gym = g.gymId;
+  if (!pins.length) { setMarkers([g], { fit: false }); map.setView([g.lat, g.lng], 15); }  // opened via link: nothing on the map yet
+  else { drawPins(); if (!map.getBounds().contains([g.lat, g.lng])) map.panTo([g.lat, g.lng]); }
+  const imgs = g.images?.length ? g.images : g.image ? [img(g.image, "m")] : [];
+  const a = g.address || {};
+  const redraw = () => {
+    const upcoming = classes.filter(c => new Date(c.end) > new Date() && mins(c) >= 10 && textMatch(c));
+    let html = "", day = "";
+    for (const c of upcoming) {
+      const d = dayLong(c.start); if (d !== day) { html += `<div class="group">${esc(d)}</div>`; day = d; }
+      html += classCard(c, { showGym: false });
+    }
+    $("#out").innerHTML = `<button class="btn ghost back" id="back">← Back</button>
+      <div class="detail">
+        ${imgs.length ? `<div class="gallery">${imgs.map(u => `<img loading="lazy" src="${esc(u)}" alt="">`).join("")}</div>` : ""}
+        <h2>${esc(g.name)}</h2>
+        <div class="addr">${esc([[a.street, a.streetNumber].filter(Boolean).join(" "), [a.zipCode, a.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}${openState(g.hours) ? " · " + openState(g.hours) : ""}</div>
+        <div class="tags">${g.inApp ? `<span class="tag lime">Classes in app</span>` : ""}${g.plusOne ? `<span class="tag">Plus1</span>` : ""}${(g.activities || []).map(x => `<span class="tag">${esc(pretty(x))}</span>`).join("")}</div>
+        ${g.offer ? `<div class="offer" onclick="this.classList.toggle('expanded')">${esc(strip(g.offer))}</div>` : ""}
+        <div class="links">${g.website ? `<a class="btn ghost" target="_blank" href="${esc(/^https?:/.test(g.website) ? g.website : "https://" + g.website)}">Website ↗</a>` : ""}
+          <a class="btn ghost" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${g.lat},${g.lng}">Directions ↗</a>
+          <a class="btn ghost" target="_blank" href="https://locations.egym.com/embed/web/wellpass/${esc(g.slug)}">Wellpass page ↗</a></div>
+        ${g.description ? `<details class="more"><summary>About the studio</summary><p>${esc(strip(g.description))}</p></details>` : ""}
+        ${g.inApp ? (html || `<div class="empty">No upcoming classes in the next 7 days.</div>`) : `<div class="empty">This studio doesn't take bookings in the app — check in on site or book via their website.</div>`}
+      </div>`;
+    $("#back").onclick = back;
+    bindCards($("#out"), upcoming);
+  };
+  const back = () => {
+    S.tab = prevTab;
+    if (!prevView) { S.gym = null; return run(); }
+    S.gym = null; S.view = prevView;
+    prevView.bar?.(); if (!prevView.bar) $("#bar").innerHTML = "";
+    prevView.redraw(); $("#list").scrollTop = 0;
+  };
+  S.view = { redraw, isDetail: true, from, onEsc: () => (back(), true) }; redraw();
+}
+
+async function viewBookings() {
+  $("#bar").innerHTML = ""; skeleton(3); status("Loading your bookings…");
+  await loadBookings();
+  let firstDraw = true;
+  const redraw = () => {
+    const active = S.bookings.filter(b => b.status === "BOOKED" && new Date(b.session.end) > new Date()).sort((a, b) => a.session.start.localeCompare(b.session.start));
+    const past = S.bookings.filter(b => !active.includes(b)).sort((a, b) => b.session.start.localeCompare(a.session.start));
+    const gyms = {}; active.forEach(b => gyms[b.session.gymId] = { gymId: b.session.gymId, name: b.session.gymName, slug: b.session.gymSlug, lat: b.session.lat, lng: b.session.lng, image: b.session.gymImage });
+    const counts = {}; active.forEach(b => counts[b.session.gymId] = (counts[b.session.gymId] || 0) + 1);
+    setMarkers(Object.values(gyms), { counts, fit: firstDraw, onClick: g => openStudio(g.slug) }); firstDraw = false;
+    const ws = (S.watches || []).slice().sort((a, b) => (a.status !== "watching") - (b.status !== "watching") || a.start.localeCompare(b.start));
+    const nw = ws.filter(w => w.status === "watching").length;
+    status(`<span><b>${active.length}</b> upcoming${nw ? ` · <b>${nw}</b> on auto-book` : ""}</span><button class="clear" id="reload">↻ Refresh</button>`);
+    $("#reload").onclick = () => viewBookings();
+    const ST = { watching: ["amber", "Auto-booking"], booked: ["lime", "✓ Booked automatically"], expired: ["", "Expired"], gone: ["", "Gone"], failed: ["", "Failed"] };
+    let html = ws.length ? `<div class="group">Auto-book</div>` + ws.map(w => {
+      const [cls, label] = ST[w.status] || ["", w.status];
+      const free = w.capacity != null ? `${Math.max(0, w.capacity - (w.booked || 0))} of ${w.capacity} free` : "";
+      return `<article class="cls ${w.status === "watching" ? "watching" : ""}" ${w.status === "watching" ? "" : 'style="opacity:.75"'}>
+        ${w.gymImage ? `<img class="thumb" src="${esc(img(w.gymImage, "t"))}" alt="" data-studio="${esc(w.gymSlug)}">` : `<div class="thumb ph" data-studio="${esc(w.gymSlug)}">${initials(w.gymName)}</div>`}
+        <div><div class="when"><b>${esc(hm(w.start))}</b><span>${esc(dayLong(w.start))}</span></div>
+          <div class="title">${esc(w.name)}</div><div class="sub"><a href="#" data-studio="${esc(w.gymSlug)}">${esc(w.gymName)}</a></div>
+          <div class="foot"><span class="tag ${cls}">${w.status === "watching" ? '<span class="pulse"></span> ' : ""}${esc(label)}</span>
+            <span class="sub" style="flex:1">${esc(free)}</span>
+            <button class="btn ghost" data-unwatch="${esc(w.id)}">${w.status === "watching" ? "Stop" : "Remove"}</button></div>
+          <div class="note">${esc(w.note || "")}${w.lastChecked ? ` · checked ${esc(new Date(w.lastChecked).toLocaleTimeString("de-DE"))}` : ""}</div></div>
+      </article>`;
+    }).join("") + `<div class="group">Booked</div>` : "";
+    let day = "";
+    for (const b of active) { const d = dayLong(b.session.start); if (d !== day) { html += `<div class="group">${esc(d)}</div>`; day = d; } html += classCard(b.session); }
+    if (!active.length) html += `<div class="empty">Nothing booked yet.<br>Find a class in the Classes tab.</div>`;
+    if (past.length) html += `<div class="group">History</div>` + past.map(b => `<article class="cls" style="opacity:.7">
+        ${b.session.gymImage ? `<img class="thumb" src="${esc(img(b.session.gymImage, "t"))}" alt="">` : `<div class="thumb ph">${initials(b.session.gymName)}</div>`}
+        <div><div class="when"><b>${esc(hm(b.session.start))}</b><span>${esc(dayLong(b.session.start))}</span></div>
+          <div class="title">${esc(b.session.name)}</div><div class="sub">${esc(b.session.gymName)}</div>
+          <div class="foot"><span class="tag">${esc(pretty(b.status))}</span></div></div></article>`).join("");
+    $("#out").innerHTML = html;
+    bindCards($("#out"), active.map(b => b.session));
+  };
+  S.view = { redraw }; redraw();
+}
+
+/* ---------------- book / cancel ---------------- */
+function dialog(html) {
+  $("#dlgBody").innerHTML = html;
+  return new Promise(res => { $("#dlg").onclose = () => res($("#dlg").returnValue === "ok"); $("#dlg").showModal(); });
+}
+function policyHtml(c) {
+  const hrs = c.cancellationWindowMs != null ? Math.round(Number(c.cancellationWindowMs) / 36e5) : 0;
+  const cur = c.currency === "EUR" || !c.currency ? "€" : c.currency;
+  const parts = [];
+  if (hrs) parts.push(`Free cancellation until <b>${hrs} h</b> before start.`);
+  if (c.lateCancelFee) parts.push(`Late cancellation: <b>${esc(c.lateCancelFee)} ${cur}</b>.`);
+  if (c.noShowFee) parts.push(`No-show: <b>${esc(c.noShowFee)} ${cur}</b>.`);
+  return parts.length ? `<div class="warn">${parts.join(" ")}</div>` : "";
+}
+async function book(c) {
+  const ok = await dialog(`${c.gymImage ? `<img class="dimg" src="${esc(img(c.gymImage, "m"))}" alt="">` : ""}<div class="dbody">
+    <h3>${esc(c.name)}</h3>
+    <p style="margin:0 0 12px">${esc(dayLong(c.start))}, ${esc(hm(c.start))}–${esc(hm(c.end))}<br><span style="color:var(--muted)">${esc(c.gymName)}${c.instructor ? " · with " + esc(c.instructor) : ""}</span></p>
+    ${policyHtml(c)}
+    <div class="actions"><button class="btn ghost" value="cancel">Not now</button><button class="btn" value="ok">Book class</button></div></div>`);
+  if (!ok) return;
+  toast("Booking…");
+  try { await api("/api/book", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classSessionId: c.id }) });
+        toast(`Booked ${c.name} ✓`); await loadBookings(); S.view.redraw(); }
+  catch (e) { toast("Booking failed: " + e.message); }
+}
+async function cancel(b) {
+  const s = b.session, p = b.cancellationPolicy || {};
+  const late = p.cancellationWindow && new Date(s.start) - new Date() < Number(p.cancellationWindow);
+  const ok = await dialog(`<div class="dbody"><h3>Cancel ${esc(s.name)}?</h3>
+    <p style="margin:0 0 12px">${esc(dayLong(s.start))}, ${esc(hm(s.start))} · ${esc(s.gymName)}</p>
+    ${late && p.lateCancelFee ? `<div class="warn">This is inside the cancellation window — a <b>${esc(p.lateCancelFee)} €</b> late cancellation fee may apply.</div>` : ""}
+    <div class="actions"><button class="btn ghost" value="cancel">Keep booking</button><button class="btn danger" value="ok">Cancel booking</button></div></div>`);
+  if (!ok) return;
+  toast("Cancelling…");
+  try { await api("/api/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bookingId: b.id }) });
+        toast("Booking cancelled"); await loadBookings(); S.view.redraw(); }
+  catch (e) { toast("Cancel failed: " + e.message); }
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || $("#dlg").open) return;
+  if (!$("#actPop").hidden) { closeActs(); return; }
+  if (document.activeElement?.tagName === "INPUT") { document.activeElement.blur(); return; }
+  if (S.view?.onEsc?.()) e.preventDefault();
+});
+
+async function watch(c) {
+  const full = c.capacity != null && c.capacity - (c.booked || 0) <= 0;
+  const ok = await dialog(`${c.gymImage ? `<img class="dimg" src="${esc(img(c.gymImage, "m"))}" alt="">` : ""}<div class="dbody">
+    <h3>Auto-book ${esc(c.name)}?</h3>
+    <p style="margin:0 0 12px">${esc(dayLong(c.start))}, ${esc(hm(c.start))}–${esc(hm(c.end))}<br><span style="color:var(--muted)">${esc(c.gymName)}</span></p>
+    <p style="margin:0 0 12px">The app checks every 10 seconds and books ${full ? "as soon as a spot frees up" : "the moment booking opens"}. You get a Mac notification when it's booked. It only runs while the local server is running.</p>
+    ${policyHtml(c)}
+    <div class="actions"><button class="btn ghost" value="cancel">Not now</button><button class="btn" value="ok">Start auto-book</button></div></div>`);
+  if (!ok) return;
+  try { await api("/api/watch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
+        toast("Auto-book on ⏳"); await loadBookings(); S.view.redraw(); }
+  catch (e) { toast("Couldn't start auto-book: " + e.message); }
+}
+async function unwatch(id) {
+  try { await api("/api/unwatch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+        toast("Auto-book stopped"); await loadBookings(); S.view.redraw(); }
+  catch (e) { toast("Failed: " + e.message); }
+}
+
+/* ---------------- activities filter ---------------- */
+const actLabel = a => S.actNames[a] || pretty(a);
+const actMatch = g => !S.acts.size || (g.activities || []).some(a => S.acts.has(a));
+function updateActBtn() {
+  const n = S.acts.size;
+  $("#actBtn").classList.toggle("on", n > 0);
+  $("#actBtn").firstChild.textContent = n === 1 ? actLabel([...S.acts][0]) + " " : n ? `Activities · ${n} ` : "Activities ";
+}
+function openActs() {
+  const pop = $("#actPop"); let draft = new Set(S.acts), q = "";
+  const base = S.pop || [];
+  const counts = {}; base.forEach(g => (g.activities || []).forEach(a => counts[a] = (counts[a] || 0) + 1));
+  const all = Object.keys({ ...S.actNames, ...counts }).sort((a, b) => actLabel(a).localeCompare(actLabel(b)));
+  const n = () => draft.size ? base.filter(g => (g.activities || []).some(a => draft.has(a))).length : base.length;
+  const render = () => {
+    const list = all.filter(a => !q || actLabel(a).toLowerCase().includes(q));
+    pop.innerHTML = `<div class="head"><label class="field"><input id="actQ" placeholder="Search activities" value="${esc(q)}" autocomplete="off">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:10px"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></label>
+        ${draft.size ? `<div class="sel">${[...draft].map(a => `<button data-x="${esc(a)}">${esc(actLabel(a))} ✕</button>`).join("")}</div>` : ""}</div>
+      <ul>${list.map(a => `<li data-a="${esc(a)}" class="${draft.has(a) ? "on" : ""}">${esc(actLabel(a))}${!draft.has(a) ? `<small>${counts[a] || 0}</small>` : ""}</li>`).join("") || `<li style="cursor:default;color:var(--muted)">No match</li>`}</ul>
+      <div class="foot"><button class="reset" id="actReset">Reset</button><button class="btn" id="actGo">Show ${n()} studios</button></div>`;
+    const inp = $("#actQ"); inp.oninput = () => { q = inp.value.trim().toLowerCase(); const pos = inp.selectionStart; render(); $("#actQ").focus(); $("#actQ").setSelectionRange(pos, pos); };
+    pop.querySelectorAll("[data-a]").forEach(li => li.onclick = () => { const a = li.dataset.a; draft.has(a) ? draft.delete(a) : draft.add(a); const y = pop.querySelector("ul").scrollTop; render(); pop.querySelector("ul").scrollTop = y; });
+    pop.querySelectorAll("[data-x]").forEach(b => b.onclick = () => { draft.delete(b.dataset.x); render(); });
+    $("#actReset").onclick = () => { draft.clear(); render(); };
+    $("#actGo").onclick = () => { S.acts = draft; store.set("acts", [...draft]); closeActs(); updateActBtn(); S.gym = null; S.view?.redraw(); };
+  };
+  render();
+  const r = $("#actBtn").getBoundingClientRect();
+  pop.style.top = r.bottom + 8 + "px";
+  pop.style.left = Math.max(12, Math.min(r.left, innerWidth - pop.offsetWidth - 12)) + "px";
+  pop.hidden = false; $("#actQ").focus();
+}
+function closeActs() { $("#actPop").hidden = true; }
+$("#actBtn").onclick = e => { e.stopPropagation(); $("#actPop").hidden ? openActs() : closeActs(); };
+document.addEventListener("mousedown", e => { if (!$("#actPop").hidden && !$("#actPop").contains(e.target) && e.target !== $("#actBtn") && !$("#actBtn").contains(e.target)) closeActs(); });
+api("/api/activities").then(m => { S.actNames = m; updateActBtn(); }).catch(() => {});
+updateActBtn();
+
+/* ---------------- live refresh ---------------- */
+const POLL_MS = 10000;  // bookings + auto-book only; class lists load on demand
+let polling = false;
+async function poll() {
+  if (polling || document.hidden || $("#dlg").open || !S.view) return;
+  polling = true; const v = S.view;
+  try {
+    const before = JSON.stringify([S.bookings, S.watches]);
+    await loadBookings();
+    const changed = JSON.stringify([S.bookings, S.watches]) !== before;
+    if (changed && S.view === v && !$("#dlg").open) {
+      const y = $("#list").scrollTop;
+      const open = [...$("#out").querySelectorAll("details[open][data-k]")].map(d => d.dataset.k);
+      const offerOpen = $("#out .offer.expanded") != null;
+      v.redraw();
+      open.forEach(k => $("#out").querySelector(`details[data-k="${CSS.escape(k)}"]`)?.setAttribute("open", ""));
+      if (offerOpen) $("#out .offer")?.classList.add("expanded");
+      $("#list").scrollTop = y;
+    }
+    $("#live").classList.remove("off");
+    $("#live span").textContent = "Live · " + new Date().toLocaleTimeString("de-DE");
+  } catch (e) {
+    $("#live").classList.add("off"); $("#live span").textContent = "Offline";
+  } finally { polling = false; }
+}
+setInterval(poll, POLL_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+/* ---------------- router ---------------- */
+async function run() {
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
+  $("#searchArea").hidden = true;
+  $("#list").scrollTop = 0;
+  try {
+    if (S.tab === "studios") await viewStudios();
+    else await viewBookings();
+  } catch (e) { $("#out").innerHTML = ""; status(esc(e.message)); }
+}
+
+if (qp.get("studio")) { document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab)); openStudio(qp.get("studio")).catch(e => status(esc(e.message))); }
+else if (S.loc || $("#place").value || S.tab === "bookings") { S.keepView = !!savedView; run().finally(() => S.keepView = false); }
+else { document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
+       status("Search a city or address, or tap the locate button."); loadBookings().catch(() => {}); }
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# credentials & session — never commit
+login.txt
+session.json
+.token.json
+
+# personal state & caches
+watches.json
+cache/
+__pycache__/
