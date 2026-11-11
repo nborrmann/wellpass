@@ -159,8 +159,16 @@
 
   /* ---------- studio detail ---------- */
   .back { margin-bottom: 12px; }
-  .gallery { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; border-radius: 18px; scrollbar-width: none; }
-  .gallery img { flex: 0 0 100%; height: 240px; object-fit: cover; scroll-snap-align: start; border-radius: 18px; background: var(--soft); }
+  .gwrap { position: relative; }
+  .gallery { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; border-radius: 18px; scrollbar-width: none; }
+  .gallery::-webkit-scrollbar { display: none; }
+  .gallery img { flex: 0 0 100%; height: 260px; object-fit: cover; scroll-snap-align: start; background: var(--soft); }
+  .gnav { position: absolute; top: 0; bottom: 0; width: 64px; border: 0; background: none; cursor: pointer; display: grid; place-items: center; color: #fff; }
+  .gnav svg { filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
+  .gnav.prev { left: 0; border-radius: 18px 0 0 18px; background: linear-gradient(90deg, rgba(0,0,0,.28), transparent); }
+  .gnav.next { right: 0; border-radius: 0 18px 18px 0; background: linear-gradient(270deg, rgba(0,0,0,.28), transparent); }
+  .gnav:disabled { opacity: 0; pointer-events: none; }
+  .gcount { position: absolute; right: 12px; bottom: 12px; background: rgba(0,0,0,.72); color: #fff; font-size: 14px; font-weight: 600; padding: 4px 10px; border-radius: 6px; font-variant-numeric: tabular-nums; }
   .detail h2 { font-size: 26px; line-height: 1.15; margin: 14px 0 4px; }
   .detail .addr { color: var(--muted); margin-bottom: 10px; }
   .detail .offer { background: var(--card); border-radius: 14px; padding: 12px 14px; font-size: 14px; margin: 12px 0; box-shadow: var(--shadow); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6.2em; overflow: hidden; cursor: pointer; position: relative; }
@@ -322,16 +330,16 @@ function drawPins() {
         .addTo(pinLayer);
     } else singles.push(...grp);
   }
-  // spread pins that would (almost) cover each other onto a small ring around their common centre
-  const SEP = 34, PIN = 50, done = new Array(singles.length).fill(false);
+  // only when zoomed in closely: nudge pins that sit (almost) exactly on top of each other apart a little; normal overlap is fine
+  const SPREAD_ZOOM = 16, SEP = 10, STEP = 26, spread = z >= SPREAD_ZOOM, done = new Array(singles.length).fill(false);
   for (let i = 0; i < singles.length; i++) {
     if (done[i]) continue;
     const grp = [singles[i]]; done[i] = true;
-    for (let k = 0; k < grp.length; k++)  // grow transitively so chains of near pins are spread together
+    for (let k = 0; spread && k < grp.length; k++)  // grow transitively so chains of near pins are spread together
       for (let j = 0; j < singles.length; j++)
         if (!done[j] && grp[k].xy.distanceTo(singles[j].xy) < SEP) { grp.push(singles[j]); done[j] = true; }
     const cx = grp.reduce((a, p) => a + p.xy.x, 0) / grp.length, cy = grp.reduce((a, p) => a + p.xy.y, 0) / grp.length;
-    const R = grp.length === 1 ? 0 : Math.max(PIN / 2 + 2, (PIN * grp.length) / (2 * Math.PI));
+    const R = grp.length === 1 ? 0 : Math.max(STEP / 2, (STEP * grp.length) / (2 * Math.PI));  // neighbours ~half a pin apart
     grp.forEach((p, k) => {
       const ang = (2 * Math.PI * k) / grp.length - Math.PI / 2;
       const ll = R ? map.unproject(L.point(cx + R * Math.cos(ang), cy + R * Math.sin(ang)), z) : L.latLng(p.g.lat, p.g.lng);
@@ -508,6 +516,16 @@ async function openStudio(slug) {
   else { drawPins(); if (!map.getBounds().contains([g.lat, g.lng])) map.panTo([g.lat, g.lng]); }
   const imgs = g.images?.length ? g.images : g.image ? [img(g.image, "m")] : [];
   const a = g.address || {};
+  let gi = 0;  // current photo, kept across redraws
+  const bindGallery = () => {
+    const gal = $("#gal"); if (!gal || imgs.length < 2) return;
+    const show = (i, smooth = true) => { gi = (i + imgs.length) % imgs.length; gal.scrollTo({ left: gi * gal.clientWidth, behavior: smooth ? "smooth" : "auto" }); sync(); };
+    const sync = () => { $("#gCount").textContent = `${gi + 1}/${imgs.length}`; };
+    gal.onscroll = () => { const i = Math.round(gal.scrollLeft / gal.clientWidth); if (i !== gi) { gi = i; sync(); } };
+    $("#gPrev").onclick = () => show(gi - 1);
+    $("#gNext").onclick = () => show(gi + 1);
+    S.view.galleryStep = d => show(gi + d); show(gi, false);
+  };
   const redraw = () => {
     const upcoming = classes.filter(c => new Date(c.end) > new Date() && mins(c) >= 10 && textMatch(c));
     let html = "", day = "";
@@ -517,7 +535,10 @@ async function openStudio(slug) {
     }
     $("#out").innerHTML = `<button class="btn ghost back" id="back">← Back</button>
       <div class="detail">
-        ${imgs.length ? `<div class="gallery">${imgs.map(u => `<img loading="lazy" src="${esc(u)}" alt="">`).join("")}</div>` : ""}
+        ${imgs.length ? `<div class="gwrap"><div class="gallery" id="gal">${imgs.map(u => `<img loading="lazy" src="${esc(u)}" alt="">`).join("")}</div>
+          ${imgs.length > 1 ? `<button class="gnav prev" id="gPrev" aria-label="Previous photo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m15 5-7 7 7 7"/></svg></button>
+          <button class="gnav next" id="gNext" aria-label="Next photo"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 5 7 7-7 7"/></svg></button>
+          <span class="gcount" id="gCount"></span>` : ""}</div>` : ""}
         <h2>${esc(g.name)}</h2>
         <div class="addr">${esc([[a.street, a.streetNumber].filter(Boolean).join(" "), [a.zipCode, a.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}${openState(g.hours) ? " · " + openState(g.hours) : ""}</div>
         <div class="tags">${g.inApp ? `<span class="tag lime">Classes in app</span>` : ""}${g.plusOne ? `<span class="tag">Plus1</span>` : ""}${(g.activities || []).map(x => `<span class="tag">${esc(pretty(x))}</span>`).join("")}</div>
@@ -529,6 +550,7 @@ async function openStudio(slug) {
         ${g.inApp ? (html || `<div class="empty">No upcoming classes in the next 7 days.</div>`) : `<div class="empty">This studio doesn't take bookings in the app — check in on site or book via their website.</div>`}
       </div>`;
     $("#back").onclick = back;
+    bindGallery();
     bindCards($("#out"), upcoming);
   };
   const back = () => {
@@ -624,6 +646,9 @@ async function cancel(b) {
 }
 
 document.addEventListener("keydown", e => {
+  if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && S.view?.galleryStep && !$("#dlg").open && $("#onb").hidden && document.activeElement?.tagName !== "INPUT") {
+    e.preventDefault(); S.view.galleryStep(e.key === "ArrowLeft" ? -1 : 1); return;
+  }
   if (e.key !== "Escape" || $("#dlg").open) return;
   if (!$("#actPop").hidden) { closeActs(); return; }
   if (!$("#onb").hidden) return;
